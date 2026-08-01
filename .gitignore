@@ -1,0 +1,29 @@
+/target
+/fuzz/target
+/fuzz/corpus
+/fuzz/artifacts
+/dist
+# Scratch. BurnPony's held 74 MB of build archives and a full upstream checkout
+# and was not ignored until someone checked; committing it once puts every byte
+# in the history permanently.
+_to_delete/
+__pycache__/
+*.pyc
+**/*.rs.bk
+.DS_Store
+
+# Release credentials. Never commit these.
+#
+# .pgpony-release-env holds NOTARIZATION_PASSWORD — an Apple app-specific
+# password — along with the signing identity, Apple ID and team ID. It sits in
+# the project root by design so the local release script can source it, which
+# means it is one `git add -A` away from a public repo. Patterns are broad on
+# purpose.
+.*-release-env
+*-release-env
+.env
+.env.*
+*.p12
+*.pem
+*.cer
+*.mobileprovision

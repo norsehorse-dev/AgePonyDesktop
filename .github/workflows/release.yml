@@ -1,0 +1,424 @@
+name: Release
+
+# Cut a release by pushing a version tag:
+#   git tag v1.0.0 && git push origin v1.0.0
+#
+# CI builds everything that needs a machine Kevin does not have -- the Linux .deb, portable tarball
+# and AppImage on both x86_64 and aarch64, and the Windows .msi -- and opens a DRAFT release with
+# them attached. The macOS .dmg, every PGP signature and the SHA256SUMS manifest are made on the Mac
+# and attached by hand, then the draft is published. RELEASING.md has the local half.
+#
+# This split is why the repository holds NO secrets. The Developer ID certificate never reaches a
+# hosted runner, and neither does the PGP release key.
+#
+# Triggers only on tag pushes. There is nothing secret here for a fork PR to reach; keep it that way.
+#
+# ── WHAT THIS DELIBERATELY CHANGED FROM BurnPonyDesktop's WORKFLOW ────────────────────────────
+#
+#  * ubuntu-22.04, NOT ubuntu-latest. This is the one correction that is not stylistic. BurnPony
+#    builds on ubuntu-latest because a bundled JVM makes the host's glibc irrelevant. A Rust binary
+#    inherits the glibc it was built against, so ubuntu-latest (24.04, glibc 2.39) would produce
+#    artifacts that refuse to start on Debian 12, Ubuntu 22.04 and anything older. 22.04 is
+#    glibc 2.35.
+#  * Runs the test suite before building artifacts. BurnPony relies on RELEASING.md telling you to
+#    run them locally, and on its first release that step got skipped.
+#  * `list` became `list-recipients`, and `selftest` checks the post-quantum reference vector inside
+#    the shipped binary -- the check that would catch ML-KEM behaving differently on aarch64, which
+#    a test suite running only on the build machine cannot see.
+#  * The GUI binary answers the verbs on macOS and Linux, so there is no second launcher there.
+#    Windows still needs one, for exactly the reason PGPony 1.0.0 found out.
+#  * Assets install to /usr/bin rather than /opt. jpackage puts nothing on PATH; cargo-deb can, and
+#    a tool people run from a terminal should be on PATH.
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # One matrix, two architectures, ONE set of steps. Deliberately not two copied jobs: an arm64
+  # lane that drifts from the x86_64 lane is how a second architecture ships with a verification
+  # gap. Cross-compiling is avoided on purpose -- eframe links X11, Wayland and GL, and a target
+  # sysroot carrying all of those is where cross-compilation goes wrong.
+  linux:
+    name: deb + tarball + AppImage (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            runner: ubuntu-22.04
+            debarch: amd64
+            deb: AgePony-linux-x86_64.deb
+            tarball: AgePony-linux-x86_64.tar.gz
+            appimage: AgePony-x86_64.AppImage
+            appimagetool: appimagetool-x86_64.AppImage
+            artifact: linux-x86_64
+          - arch: aarch64
+            runner: ubuntu-22.04-arm
+            debarch: arm64
+            deb: AgePony-linux-arm64.deb
+            tarball: AgePony-linux-aarch64.tar.gz
+            appimage: AgePony-aarch64.AppImage
+            appimagetool: appimagetool-aarch64.AppImage
+            artifact: linux-aarch64
+    steps:
+      - uses: actions/checkout@v5
+
+      # rust-toolchain.toml is checked in and applies to local builds and CI alike, so the
+      # equivalent of BurnPony's "the dmg bundled a different runtime from CI's artifacts" is not
+      # constructible here. selftest reports the compiler anyway, and the tarball step asserts it.
+      - name: Show the toolchain
+        run: rustc --version && cargo --version
+
+      # eframe needs these to LINK, not merely to run. desktop-file-utils supplies
+      # desktop-file-validate, which appimagetool runs against the AppDir's .desktop and refuses to
+      # build without.
+      - name: Build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libgtk-3-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev \
+            libxkbcommon-dev libssl-dev libwayland-dev libgl1-mesa-dev \
+            fakeroot desktop-file-utils
+
+      - name: Test
+        run: |
+          cargo test --workspace --release
+          cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: Build
+        run: cargo build --release --workspace
+
+      - name: Package deb
+        run: |
+          cargo install cargo-deb --locked
+          cargo deb -p agepony-desktop --no-build --output ${{ matrix.deb }}
+
+      - name: Verify the deb's identity
+        run: |
+          dpkg-deb -f ${{ matrix.deb }} Package Version Architecture Depends
+          # Lowercase. A deb whose Package field is PascalCase is uninstallable on strict tooling,
+          # and the filename alone would not show it.
+          test "$(dpkg-deb -f ${{ matrix.deb }} Package)" = agepony
+          test "$(dpkg-deb -f ${{ matrix.deb }} Architecture)" = ${{ matrix.debarch }}
+          # $auto must have found real shared-library dependencies. An empty Depends on a Rust GUI
+          # binary means the ELF was not scanned, and the deb installs onto a machine with no GL and
+          # fails at launch.
+          deps=$(dpkg-deb -f ${{ matrix.deb }} Depends)
+          echo "Depends -> $deps"
+          test -n "$deps"
+          echo "$deps" | grep -q libc6
+
+      - name: Verify the deb's payload and desktop entry
+        run: |
+          rm -rf /tmp/debx && mkdir -p /tmp/debx
+          dpkg-deb -x ${{ matrix.deb }} /tmp/debx
+
+          # LOCATE the launcher first so a failure prints where it actually is.
+          launcher=$(find /tmp/debx -type f -perm -u+x -path '*/bin/*' -name 'agepony' | head -1)
+          echo "launcher in the deb -> ${launcher:-NONE FOUND}"
+          test -n "$launcher"
+          test "$launcher" = /tmp/debx/usr/bin/agepony
+
+          d=$(find /tmp/debx -name '*.desktop' -type f | head -1)
+          echo "desktop entry -> ${d:-NONE FOUND}"
+          test -n "$d"
+          cat "$d"
+          grep -q '^Exec=agepony' "$d"
+          desktop-file-validate "$d"
+
+          # Categories=Unknown is what jpackage emits with no menu group, and it is not a registered
+          # freedesktop main category, so the entry is spec-invalid and the app can land in no menu
+          # at all. cargo-deb will not do this to us because the .desktop is committed -- assert it
+          # anyway, it is one line and PGPony's shipped deb still has the defect.
+          cats=$(sed -n 's/^Categories=//p' "$d")
+          echo "Categories -> [$cats]"
+          test -n "$cats"
+          test "$cats" != Unknown
+
+          # No file associations: AgePony implements no handler for an opened file. Asserting the
+          # ABSENCE makes this a tripwire -- adding associations later fails here and forces the
+          # .desktop and the routing code to land in the same change.
+          mime=$(sed -n 's/^MimeType=//p' "$d" | tr -d '; \t')
+          echo "MimeType value -> [$mime]"
+          test -z "$mime"
+
+          icon=$(find /tmp/debx -path '*icons*' -name 'agepony.png' | head -1)
+          echo "icon -> ${icon:-NONE FOUND}"
+          test -n "$icon"
+
+      # Binary plus the files a user needs, inside ONE versioned top-level directory. Never loose
+      # files that explode into $PWD.
+      - name: Build the portable tarball
+        run: |
+          rm -rf stage && mkdir -p stage/AgePony
+          cp target/release/agepony stage/AgePony/
+          cp README.md LICENSE NOTICE stage/AgePony/
+          cp packaging/appimage/agepony.desktop packaging/agepony.png stage/AgePony/
+          tar -czf ${{ matrix.tarball }} -C stage AgePony
+
+      # The tarball has no installer to vouch for it, so it gets the checks the deb gets for free.
+      # This is also the step that proves the binary RUNS on this architecture -- everything above
+      # only proves it was produced.
+      - name: Verify the portable tarball
+        run: |
+          rm -rf /tmp/tarcheck && mkdir -p /tmp/tarcheck
+          tar -xzf ${{ matrix.tarball }} -C /tmp/tarcheck
+          AP=/tmp/tarcheck/AgePony/agepony
+          test -x "$AP"
+
+          out=$("$AP" version 2>&1)
+          echo "version -> $out"
+          test -n "$out"
+          # The artifact reports the compiler that built it rather than the workflow inferring it
+          # from the runner.
+          echo "$out" | grep -q 'rustc '
+          echo "$out" | grep -q '${{ matrix.arch }}'
+
+          # selftest exercises the crypto IN THIS BUILD. `set +e` so a failure is PRINTED rather
+          # than collapsing the step with no output: the whole value is learning WHICH check broke.
+          set +e
+          st=$("$AP" selftest 2>&1); code=$?
+          set -e
+          echo "$st"
+          echo "selftest exit -> $code"
+          test "$code" -eq 0
+          echo "$st" | grep -q '^PASS - all '
+          # The post-quantum reference vector, on this architecture. Lattice code behaving
+          # differently on aarch64 is the failure this catches and nothing else would.
+          echo "$st" | grep -q 'PASS - post-quantum reference vector'
+
+          # list-recipients is the only check that opens the config directory and the JSON store
+          # outside a dev environment. Empty store prints to stderr by design, so an empty result
+          # pipes as zero lines -- hence 2>&1.
+          set +e
+          ls_out=$("$AP" list-recipients 2>&1); ls_code=$?
+          set -e
+          echo "list-recipients -> $ls_out"
+          test "$ls_code" -eq 0
+          echo "$ls_out" | grep -q 'No recipients on this machine'
+
+      # AppRun and the .desktop are COMMITTED files copied in, never heredocs written inline. A YAML
+      # block scalar re-indents its content, and a shell script whose shebang arrives with leading
+      # whitespace cannot be exec'd at all -- and the failure names neither the cause nor the file.
+      #
+      # --appimage-extract-and-run is what lets appimagetool work on a runner: it unpacks itself
+      # rather than mounting, and hosted runners have no FUSE.
+      - name: Build AppImage
+        run: |
+          APPDIR=AgePony.AppDir
+          rm -rf "$APPDIR"
+          mkdir -p "$APPDIR/usr/bin"
+          cp target/release/agepony "$APPDIR/usr/bin/agepony"
+          cp packaging/appimage/AppRun "$APPDIR/AppRun"
+          chmod +x "$APPDIR/AppRun"
+          cp packaging/appimage/agepony.desktop "$APPDIR/agepony.desktop"
+          # Icon=agepony in the .desktop resolves to this file. The name must match or
+          # desktop-file-validate passes and the AppImage shows a generic icon.
+          cp packaging/agepony.png "$APPDIR/agepony.png"
+          wget -q https://github.com/AppImage/appimagetool/releases/download/continuous/${{ matrix.appimagetool }}
+          chmod +x ${{ matrix.appimagetool }}
+          ARCH=${{ matrix.arch }} ./${{ matrix.appimagetool }} --appimage-extract-and-run "$APPDIR" ${{ matrix.appimage }}
+
+      # --appimage-extract needs no FUSE either, so the produced image can be opened and its entry
+      # point actually executed. This proves AppRun's exec path resolves inside the bundle, which is
+      # the one thing a committed-vs-generated AppRun mistake would break.
+      - name: Verify the AppImage runs
+        run: |
+          chmod +x ${{ matrix.appimage }}
+          rm -rf squashfs-root
+          ./${{ matrix.appimage }} --appimage-extract > /dev/null
+          test -x squashfs-root/AppRun
+          out=$(./squashfs-root/AppRun version 2>&1)
+          echo "AppRun version -> $out"
+          test -n "$out"
+          set +e
+          st=$(./squashfs-root/AppRun selftest 2>&1); code=$?
+          set -e
+          echo "$st"
+          echo "AppRun selftest exit -> $code"
+          test "$code" -eq 0
+          rm -rf squashfs-root
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: |
+            ${{ matrix.deb }}
+            ${{ matrix.tarball }}
+            ${{ matrix.appimage }}
+
+  windows:
+    name: msi (Windows)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Show the toolchain
+        run: rustc --version; cargo --version
+
+      - name: Test
+        run: |
+          cargo test --workspace --release
+          cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: Build msi
+        shell: pwsh
+        run: |
+          cargo install cargo-wix --locked
+          cargo build --release --workspace
+          cargo wix -p agepony-desktop --no-build --nocapture --output AgePony-windows.msi
+
+      # WiX itself is not chatty about why it refused. Gradle prints only a log path and says
+      # "exit code 1"; candle/light are not much better, so dump whatever they left behind.
+      - name: WiX logs on failure
+        if: failure()
+        shell: pwsh
+        run: |
+          Get-ChildItem -Recurse -Filter *.wixpdb -ErrorAction SilentlyContinue | ForEach-Object { Write-Host $_.FullName }
+          Get-ChildItem target/wix -ErrorAction SilentlyContinue | ForEach-Object { Write-Host $_.FullName }
+
+      # Verified against the INSTALLED msi, not a build directory. Installing also makes this the
+      # clean-machine install the release checklist otherwise never performs.
+      - name: Install the msi and verify it
+        shell: pwsh
+        run: |
+          $msi = (Resolve-Path AgePony-windows.msi).Path
+          Write-Host "installing $msi"
+          $p = Start-Process msiexec.exe -ArgumentList '/i', "`"$msi`"", '/qn', '/norestart' -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "msiexec failed with exit code $($p.ExitCode)" }
+
+          $img = 'C:\Program Files\AgePony'
+          if (-not (Test-Path $img)) {
+            Write-Host 'Program Files contents:'
+            Get-ChildItem 'C:\Program Files' -Directory | Select-Object -ExpandProperty Name
+            throw "installed app not found at $img"
+          }
+          Write-Host "installed at $img"
+
+          # 1. BOTH binaries. agepony-cli.exe is the console-subsystem one; without it every verb
+          #    on Windows runs and discards its output, which is what PGPony 1.0.0 shipped.
+          foreach ($exe in 'agepony.exe', 'agepony-cli.exe') {
+            $found = Get-ChildItem $img -Recurse -Filter $exe -ErrorAction SilentlyContinue | Select-Object -First 1
+            if (-not $found) {
+              Write-Host 'installed tree:'
+              Get-ChildItem $img -Recurse | Select-Object -ExpandProperty FullName
+              throw "binary missing: $exe"
+            }
+            Write-Host "$exe -> $($found.FullName)"
+          }
+          $cli = (Get-ChildItem $img -Recurse -Filter 'agepony-cli.exe' | Select-Object -First 1).FullName
+
+          # 2. The CLI actually PRINTS. A GUI-subsystem process has no stdout, so this is the check
+          #    that the second binary exists for.
+          $out = & $cli version 2>&1 | Out-String
+          Write-Host "agepony-cli version -> '$($out.Trim())'"
+          if ([string]::IsNullOrWhiteSpace($out)) {
+            throw 'agepony-cli.exe printed nothing - the console subsystem was not applied'
+          }
+          if ($out -notmatch 'AgePony Desktop') { throw "version printed something unexpected: $out" }
+
+          # 3. selftest passes in the INSTALLED binary, asserting on real output and the exit code
+          #    rather than on the absence of an error string.
+          $st = & $cli selftest 2>&1 | Out-String
+          $stCode = $LASTEXITCODE
+          Write-Host $st
+          Write-Host "selftest exit -> $stCode"
+          if ($stCode -ne 0) { throw "selftest failed with exit code $stCode" }
+          if ($st -notmatch 'PASS - all ') { throw 'selftest did not report PASS - did it fall through to usage?' }
+          if ($st -notmatch 'PASS - post-quantum reference vector') {
+            throw 'the post-quantum reference vector did not pass on Windows'
+          }
+
+          # 4. list-recipients opens the config directory and the JSON store.
+          $ls = & $cli list-recipients 2>&1 | Out-String
+          $lsCode = $LASTEXITCODE
+          Write-Host "list-recipients -> $($ls.Trim())"
+          if ($lsCode -ne 0) { throw "list-recipients failed with exit code $lsCode" }
+          if ($ls -notmatch 'No recipients on this machine') {
+            throw "list-recipients printed something unexpected: $ls"
+          }
+
+          # 5. The GUI binary must NOT print. If it does, windows_subsystem was dropped and every
+          #    launch flashes a console window behind the app.
+          $gui = (Get-ChildItem $img -Recurse -Filter 'agepony.exe' | Select-Object -First 1).FullName
+          $guiOut = & $gui version 2>&1 | Out-String
+          Write-Host "agepony.exe version printed -> '$($guiOut.Trim())'"
+          if (-not [string]::IsNullOrWhiteSpace($guiOut)) {
+            throw 'agepony.exe printed to stdout - windows_subsystem = "windows" was not applied, so the GUI will flash a console on every launch'
+          }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: msi
+          path: AgePony-windows.msi
+
+  draft:
+    name: Open the draft release
+    # Naming the matrix job once waits for BOTH of its legs.
+    needs: [linux, windows]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Collect
+        run: |
+          mkdir -p dist
+          mv artifacts/linux-x86_64/AgePony-linux-x86_64.deb dist/
+          mv artifacts/linux-x86_64/AgePony-linux-x86_64.tar.gz dist/
+          mv artifacts/linux-x86_64/AgePony-x86_64.AppImage dist/
+          mv artifacts/linux-aarch64/AgePony-linux-arm64.deb dist/
+          mv artifacts/linux-aarch64/AgePony-linux-aarch64.tar.gz dist/
+          mv artifacts/linux-aarch64/AgePony-aarch64.AppImage dist/
+          mv artifacts/msi/AgePony-windows.msi dist/
+          ls -l dist
+          # Printed, not committed: the authoritative SHA256SUMS is built on the Mac once the dmg
+          # exists, and two manifests that disagree is worse than one that is late.
+          sha256sum dist/*
+
+      # Re-pushing a tag is a normal thing to do, and a bare `gh release create` fails outright when
+      # a release for that tag already exists, taking this job red for a reason unrelated to the
+      # build. Clear any existing DRAFT first. A PUBLISHED release is left alone deliberately:
+      # deleting one out from under users is not something a workflow should do unattended.
+      - name: Clear any stale draft for this tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "${{ github.ref_name }}" --repo "${{ github.repository }}" \
+               --json isDraft --jq '.isDraft' 2>/dev/null | grep -qx true; then
+            echo "deleting stale draft for ${{ github.ref_name }}"
+            gh release delete "${{ github.ref_name }}" --repo "${{ github.repository }}" --yes
+          else
+            echo "no draft to clear"
+          fi
+
+      # DRAFT, deliberately. A release published without the dmg, without signatures and without
+      # SHA256SUMS is visible to anyone watching the repo, and a download page starts linking assets
+      # that do not exist.
+      - name: Create draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${{ github.ref_name }}" \
+            dist/AgePony-linux-x86_64.deb \
+            dist/AgePony-linux-x86_64.tar.gz \
+            dist/AgePony-x86_64.AppImage \
+            dist/AgePony-linux-arm64.deb \
+            dist/AgePony-linux-aarch64.tar.gz \
+            dist/AgePony-aarch64.AppImage \
+            dist/AgePony-windows.msi \
+            --repo "${{ github.repository }}" \
+            --title "AgePony Desktop ${{ github.ref_name }}" \
+            --draft \
+            --generate-notes
+          echo "Draft created. Build and notarize the dmg, sign everything, attach, publish."
+          echo "See RELEASING.md."

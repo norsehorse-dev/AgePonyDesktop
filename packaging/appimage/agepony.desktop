@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=AgePony
+GenericName=File Encryption
+Comment=Encrypt and decrypt files with age, including post-quantum recipients
+Exec=agepony
+Icon=agepony
+Terminal=false
+Categories=Utility;Security;
+Keywords=age;encryption;decrypt;post-quantum;
+StartupWMClass=AgePony

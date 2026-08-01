@@ -1,0 +1,63 @@
+# Its own workspace: cargo-fuzz builds with nightly and sanitizer flags that
+# should not leak into the main build.
+[workspace]
+
+[package]
+name = "agepony-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+agepony-core = { path = "../agepony-core" }
+serde_json = "1"
+age = "=0.12.1"
+
+[profile.release]
+debug = 1
+
+[[bin]]
+name = "bech32"
+path = "fuzz_targets/bech32.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "recipient"
+path = "fuzz_targets/recipient.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "identity_file"
+path = "fuzz_targets/identity_file.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "hybrid_key"
+path = "fuzz_targets/hybrid_key.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "age_file"
+path = "fuzz_targets/age_file.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "book_json"
+path = "fuzz_targets/book_json.rs"
+test = false
+doc = false
+bench = false

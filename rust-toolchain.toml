@@ -1,0 +1,26 @@
+# Checked in so local builds and CI use the same compiler.
+#
+# This is the Rust counterpart of a defect BurnPony shipped: Compose's javaHome
+# defaulted to the JVM the Gradle daemon happened to run on rather than the
+# declared toolchain, so a notarized DMG bundled Java 21 while the same commit's
+# CI artifacts bundled 17 — one source, two runtimes, and the platform
+# smoke-tested by hand was the one no CI job had exercised. A toolchain file in
+# the repository makes the equivalent unconstructible, because there is no
+# second place for a version to come from.
+#
+# "stable" rather than an exact version, deliberately. An exact pin is the
+# stronger property — it would also rule out drift ACROSS TIME, so a release cut
+# today and a hotfix cut next month were the same compiler — but it makes every
+# machine fetch a specific toolchain before it can build, including a fresh
+# clone with no network. If that trade ever looks worth making, pin it here and
+# nowhere else.
+#
+# Either way `agepony version` reports the compiler that built it and CI asserts
+# on the artifact, so drift is visible rather than assumed.
+#
+# Darwin targets are NOT listed here: they would be installed on every Linux and
+# Windows machine that touches the repo for no reason. tools/make-dmg.sh adds
+# them itself, on the one machine that needs them.
+[toolchain]
+channel = "stable"
+components = ["clippy", "rustfmt"]

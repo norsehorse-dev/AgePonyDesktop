@@ -1,0 +1,77 @@
+[package]
+name = "agepony-desktop"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+
+# `agepony`, not `agepony-desktop`: the binary is what users type and what the
+# packaging refers to. `default-run` so `cargo run` is unambiguous with two bins.
+default-run = "agepony"
+
+[[bin]]
+name = "agepony"
+path = "src/main.rs"
+
+# Windows only in the packaging, but built everywhere so it cannot rot.
+[[bin]]
+name = "agepony-cli"
+path = "src/bin/agepony-cli.rs"
+
+[lib]
+name = "agepony_desktop"
+path = "src/lib.rs"
+
+# ---------------------------------------------------------------- packaging ---
+
+[package.metadata.deb]
+# Lowercase. A deb whose Package field is PascalCase is uninstallable on strict
+# tooling, and the filename alone would not show it. CI asserts this.
+name = "agepony"
+maintainer = "NorseHorse <NorseHorse@norsehor.se>"
+copyright = "2026, NorseHorse"
+license-file = ["../LICENSE", "0"]
+section = "utils"
+priority = "optional"
+# $auto reads the built ELF and derives the real shared-library dependencies.
+# The family's jpackage builds declare none, because a bundled JVM needs none; a
+# Rust GUI binary links X11, Wayland and GL and absolutely does. CI fails the
+# build if this comes out empty.
+depends = "$auto"
+extended-description = """
+Encrypt and decrypt files with age, including post-quantum recipients. \
+Interoperable with AgePony on iOS and Android, with rage, and with the Go age \
+reference implementation. No accounts, no telemetry, no network access."""
+assets = [
+    ["../target/release/agepony", "usr/bin/", "755"],
+    ["../packaging/appimage/agepony.desktop", "usr/share/applications/agepony.desktop", "644"],
+    ["../packaging/agepony.png", "usr/share/icons/hicolor/512x512/apps/agepony.png", "644"],
+    ["../README.md", "usr/share/doc/agepony/README.md", "644"],
+]
+
+[package.metadata.wix]
+# The GUIDs live in wix/main.wxs and nowhere else. They were generated once by
+# `cargo wix init` and are committed: change the UpgradeCode and every prior
+# install is stranded as a separate program the upgrader cannot see. ProductCode
+# is a different GUID and is regenerated per version by design.
+#
+# Nothing is duplicated here on purpose — two copies that must agree is a drift
+# waiting to happen.
+eula = false
+license = false
+
+[dependencies]
+agepony-core = { path = "../agepony-core" }
+age.workspace = true
+eframe = { version = "=0.35.0", features = ["persistence"] }
+egui = "=0.35.0"
+rfd = "0.15"
+directories = "6"
+anyhow = "1"
+serde.workspace = true
+serde_json.workspace = true
+qrcode = { version = "0.14.1", default-features = false }
+
+[dev-dependencies]
+ttf-parser = "0.25.1"

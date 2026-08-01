@@ -1,0 +1,73 @@
+AgePony Desktop
+Copyright 2026 NorseHorse
+
+Licensed under the Apache License, Version 2.0. See LICENSE.
+
+This NOTICE file is required reading under section 4(d) of that licence: anyone
+redistributing this software, modified or not, must carry it along.
+
+This product includes software developed by third parties, listed below with
+their licences. Full licence texts for the bundled fonts are in
+agepony-desktop/assets/fonts/.
+
+--------------------------------------------------------------------------------
+Cryptography
+--------------------------------------------------------------------------------
+
+age, age-core                      MIT OR Apache-2.0    Jack Grigg, Filippo Valsorda
+  https://crates.io/crates/age
+  The age file encryption implementation.
+
+ml-kem                             Apache-2.0 OR MIT    RustCrypto Developers
+x25519-dalek                       BSD-3-Clause         isis lovecruft, Henry de Valence
+sha2, sha3, hkdf, hmac             Apache-2.0 OR MIT    RustCrypto Developers
+chacha20poly1305                   Apache-2.0 OR MIT    RustCrypto Developers
+shake                              Apache-2.0 OR MIT    RustCrypto Developers
+zeroize                            Apache-2.0 OR MIT    The RustCrypto Project Developers
+
+  ML-KEM-768 and X25519 provide the post-quantum hybrid; SHA-3 and SHAKE-256
+  the X-Wing combiner; HKDF-SHA256 and ChaCha20-Poly1305 the HPKE layer.
+
+--------------------------------------------------------------------------------
+Interface
+--------------------------------------------------------------------------------
+
+egui, eframe                       MIT OR Apache-2.0    Emil Ernerfeldt
+  https://github.com/emilk/egui
+  The immediate-mode GUI and its native shell.
+
+rfd                                MIT                  Poly
+qrcode                             MIT OR Apache-2.0    kennytm
+directories                        MIT OR Apache-2.0    Simon Ochsenreither
+
+--------------------------------------------------------------------------------
+Fonts, embedded in the binary
+--------------------------------------------------------------------------------
+
+Inter                              SIL Open Font License 1.1
+  Copyright (c) 2016 The Inter Project Authors
+  https://github.com/rsms/inter
+  Subset to Latin plus the symbols this interface draws.
+  Licence: agepony-desktop/assets/fonts/INTER-LICENSE.txt
+
+JetBrains Mono                     SIL Open Font License 1.1
+  Copyright (c) 2020 The JetBrains Mono Project Authors
+  https://github.com/JetBrains/JetBrainsMono
+  Subset as above.
+  Licence: agepony-desktop/assets/fonts/JETBRAINS-MONO-LICENSE.txt
+
+--------------------------------------------------------------------------------
+Supporting
+--------------------------------------------------------------------------------
+
+serde, serde_json                  MIT OR Apache-2.0    Erick Tryzelaar, David Tolnay
+thiserror, anyhow                  MIT OR Apache-2.0    David Tolnay
+base64                             MIT OR Apache-2.0    Marshall Pierce
+getrandom                          MIT OR Apache-2.0    The Rand Project Developers
+
+--------------------------------------------------------------------------------
+
+The full dependency tree, with licences, is reproducible with:
+
+    cargo tree --workspace --edges normal
+    cargo license --workspace          # requires cargo-license

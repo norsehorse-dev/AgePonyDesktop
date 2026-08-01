@@ -1,0 +1,41 @@
+[package]
+name = "agepony-core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+age.workspace = true
+age-core.workspace = true
+zeroize.workspace = true
+thiserror.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha3 = { version = "0.12.0", features = ["zeroize"] }
+hkdf = "0.13.0"
+sha2 = "0.11.0"
+# zeroize on every crate that holds key material in its own state. None of
+# these are on by default, and a known-answer test can never notice they are
+# missing: output is byte-identical either way. The difference is only whether
+# an ML-KEM decapsulation key, an AEAD cipher state or a hash buffer is wiped
+# when it drops, or left in freed heap for whatever allocates next.
+chacha20poly1305 = { version = "0.11.0", features = ["zeroize"] }
+x25519-dalek = { version = "3.0.0", features = ["static_secrets", "zeroize"] }
+getrandom = "0.4.3"
+base64 = "0.23.0"
+ml-kem = { version = "0.2", features = ["deterministic", "zeroize"] }
+shake = "0.1.0"
+
+[dev-dependencies]
+age-core.workspace = true
+base64 = "0.23.0"
+hex = "0.4"
+proptest = "1.11.0"
+
+[lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+indexing_slicing = "warn"
