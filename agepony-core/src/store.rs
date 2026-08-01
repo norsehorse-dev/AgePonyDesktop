@@ -419,7 +419,7 @@ fn read_decrypted_text(path: &Path, passphrase: &SecretString) -> Result<String>
     let bytes = std::fs::read(path).map_err(io_at(path))?;
     let armored = age::armor::ArmoredReader::new(&bytes[..]);
     let decryptor = age::Decryptor::new(armored)?;
-    let identity = age::scrypt::Identity::new(passphrase.clone());
+    let identity = crate::passphrase::identity(passphrase.clone());
     let mut reader = decryptor.decrypt(std::iter::once(&identity as &dyn age::Identity))?;
     let mut out = Zeroizing::new(Vec::new());
     std::io::Read::read_to_end(&mut reader, &mut out)?;

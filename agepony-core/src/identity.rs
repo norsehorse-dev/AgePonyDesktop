@@ -125,7 +125,7 @@ pub fn load_file_maybe_encrypted(
 fn decrypt_identity_bytes(bytes: &[u8], passphrase: &SecretString) -> Result<Zeroizing<Vec<u8>>> {
     let armored = age::armor::ArmoredReader::new(bytes);
     let decryptor = age::Decryptor::new(armored)?;
-    let identity = age::scrypt::Identity::new(passphrase.clone());
+    let identity = crate::passphrase::identity(passphrase.clone());
     let mut reader = decryptor.decrypt(std::iter::once(&identity as &dyn age::Identity))?;
 
     let mut out = Zeroizing::new(Vec::new());
@@ -150,7 +150,7 @@ pub fn save_encrypted_identity_file(
     let dir = path.parent().unwrap_or_else(|| Path::new("."));
     fs::create_dir_all(dir).map_err(io_at(dir))?;
 
-    let encryptor = age::Encryptor::with_user_passphrase(passphrase.clone());
+    let encryptor = crate::passphrase::encryptor(passphrase.clone())?;
     let mut buffer = Vec::new();
     {
         let mut writer = encryptor.wrap_output(&mut buffer)?;

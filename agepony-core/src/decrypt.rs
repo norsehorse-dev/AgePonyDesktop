@@ -49,7 +49,7 @@ pub fn decrypt_file(
             decryptor.decrypt(ids.iter().map(|i| i.as_ref() as &dyn age::Identity))?
         }
         With::Passphrase(p) => {
-            passphrase_identity = age::scrypt::Identity::new(p);
+            passphrase_identity = crate::passphrase::identity(p);
             decryptor.decrypt(std::iter::once(&passphrase_identity as &dyn age::Identity))?
         }
     };

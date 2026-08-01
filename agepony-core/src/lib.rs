@@ -10,6 +10,7 @@
 //! - [`recipient`] — parsing recipient strings, classical and post-quantum
 //! - [`book`] — the named recipient book (public key material only)
 //! - [`store`] — the identity store: labels, dates, the active identity
+//! - [`passphrase`] — the scrypt work factor AgePony writes and accepts
 //! - [`porting`] — receiving an identity from a phone
 //! - [`vault`] — keeping the store and the book consistent with each other
 //! - [`encrypt`] / [`decrypt`] — streaming file operations with progress
@@ -35,6 +36,7 @@ pub mod decrypt;
 pub mod encrypt;
 pub mod error;
 pub mod identity;
+pub mod passphrase;
 pub mod porting;
 pub mod pq;
 pub mod recipient;

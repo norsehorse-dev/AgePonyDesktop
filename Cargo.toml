@@ -18,6 +18,14 @@ thiserror = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
+# scrypt is deliberately expensive, and agepony-core pins its work factor
+# rather than measuring the machine (see agepony-core/src/passphrase.rs).
+# Unoptimised, a single 2^18 run takes the best part of a minute, which
+# would make `cargo test` in debug unusable. Dependencies are optimised;
+# the workspace crates stay unoptimised and debuggable.
+[profile.dev.package."*"]
+opt-level = 2
+
 [profile.release]
 opt-level = 3
 lto = true

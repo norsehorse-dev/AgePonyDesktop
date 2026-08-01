@@ -146,7 +146,7 @@ pub fn encrypt_file(
             }
             age::Encryptor::with_recipients(rs.iter().map(|r| r.recipient.as_ref() as _))?
         }
-        To::Passphrase(p) => age::Encryptor::with_user_passphrase(p),
+        To::Passphrase(p) => crate::passphrase::encryptor(p)?,
     };
 
     let (guard, sink) = TempOut::create(output)?;

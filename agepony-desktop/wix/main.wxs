@@ -63,13 +63,13 @@
         Name='AgePony'
         UpgradeCode='4AF6F8FF-E255-4D68-BD1E-FA65488BB6F7'
         Manufacturer='NorseHorse'
-        Description='AgePony Desktop — encrypt and decrypt files with age'
         Language='1033'
         Codepage='1252'
         Version='$(var.Version)'>
 
         <Package Id='*'
             Keywords='Installer'
+            Description='AgePony Desktop - encrypt and decrypt files with age'
             Manufacturer='NorseHorse'
             InstallerVersion='450'
             Languages='1033'
