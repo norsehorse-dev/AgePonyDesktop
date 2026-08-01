@@ -406,6 +406,31 @@ mod tests {
     }
 
     #[test]
+    fn the_version_matches_what_the_workspace_declares() {
+        // Reads the manifest as TEXT and compares. A test that asked the code
+        // what version it thinks it is would pass throughout a drift, because
+        // it would be reading the same constant the code reads — which is
+        // exactly how PGPony shipped `1.0.0-dev.D2` through two entire phases
+        // beside a comment saying the two must stay in step.
+        //
+        // What this actually guards: someone adding an explicit `version =` to
+        // a member crate, breaking the single declaration.
+        const WORKSPACE_MANIFEST: &str = include_str!("../../Cargo.toml");
+
+        let declared = WORKSPACE_MANIFEST
+            .lines()
+            .skip_while(|l| l.trim() != "[workspace.package]")
+            .find_map(|l| l.trim().strip_prefix("version = "))
+            .map(|v| v.trim().trim_matches('"'))
+            .expect("[workspace.package] declares no version");
+
+        assert_eq!(
+            declared, VERSION,
+            "the workspace manifest says {declared} but this crate reports {VERSION}"
+        );
+    }
+
+    #[test]
     fn no_arguments_means_open_the_gui() {
         assert!(run(&[]).is_none());
     }
