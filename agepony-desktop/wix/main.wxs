@@ -98,7 +98,7 @@
                     <Component Id='License' Guid='*'>
                         <File Id='LicenseFile'
                             DiskId='1'
-                            Source='wix\License.rtf'
+                            Source='$(sys.SOURCEFILEDIR)License.rtf'
                             KeyPath='yes'/>
                     </Component>
                     
@@ -171,7 +171,7 @@
           The product icon is the graphic that appears in the Add/Remove
           Programs control panel for the application.
         -->
-        <Icon Id='ProductICO' SourceFile='wix\Product.ico'/>
+        <Icon Id='ProductICO' SourceFile='$(sys.SOURCEFILEDIR)Product.ico'/>
         <Property Id='ARPPRODUCTICON' Value='ProductICO' />
 
         
@@ -204,7 +204,7 @@
           Disabling the EULA dialog in the installer requires commenting out
           or removing the following `WixVariable` tag
         -->
-        <WixVariable Id='WixUILicenseRtf' Value='wix\License.rtf'/>
+        <WixVariable Id='WixUILicenseRtf' Value='$(sys.SOURCEFILEDIR)License.rtf'/>
         
         
         <!--
@@ -215,7 +215,7 @@
 
           The banner BMP dimensions are 493 x 58 pixels.
         -->
-        <!--<WixVariable Id='WixUIBannerBmp' Value='wix\Banner.bmp'/>-->
+        <!--<WixVariable Id='WixUIBannerBmp' Value='$(sys.SOURCEFILEDIR)Banner.bmp'/>-->
 
         
         <!--
@@ -226,7 +226,7 @@
 
           The dialog BMP dimensions are 493 x 312 pixels.
         -->
-        <!--<WixVariable Id='WixUIDialogBmp' Value='wix\Dialog.bmp'/>-->
+        <!--<WixVariable Id='WixUIDialogBmp' Value='$(sys.SOURCEFILEDIR)Dialog.bmp'/>-->
 
     </Product>
 
