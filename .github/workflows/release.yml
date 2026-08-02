@@ -344,13 +344,33 @@ jobs:
             throw "list-recipients printed something unexpected: $ls"
           }
 
-          # 5. The GUI binary must NOT print. If it does, windows_subsystem was dropped and every
-          #    launch flashes a console window behind the app.
+          # 5. The GUI binary must be GUI-subsystem, or every launch flashes a console window
+          #    behind the app. Read that out of the PE header rather than watching for output:
+          #    windows_subsystem = "windows" stops Windows ALLOCATING a console, it does not
+          #    close stdout. A GUI binary launched from a shell that redirects its output -- which
+          #    is exactly what `& $exe | Out-String` does -- still prints, so "it printed, therefore
+          #    the subsystem is wrong" is simply not true. This is the direct assertion.
+          #
+          #    IMAGE_SUBSYSTEM_WINDOWS_GUI = 2, IMAGE_SUBSYSTEM_WINDOWS_CUI = 3. Subsystem sits 68
+          #    bytes into the optional header in both PE32 and PE32+.
+          function Get-PESubsystem($path) {
+            $bytes = [System.IO.File]::ReadAllBytes($path)
+            $pe = [BitConverter]::ToInt32($bytes, 0x3C)
+            if ($bytes[$pe] -ne 0x50 -or $bytes[$pe + 1] -ne 0x45) { throw "$path is not a PE image" }
+            return [BitConverter]::ToUInt16($bytes, $pe + 24 + 68)
+          }
+
           $gui = (Get-ChildItem $img -Recurse -Filter 'agepony.exe' | Select-Object -First 1).FullName
-          $guiOut = & $gui version 2>&1 | Out-String
-          Write-Host "agepony.exe version printed -> '$($guiOut.Trim())'"
-          if (-not [string]::IsNullOrWhiteSpace($guiOut)) {
-            throw 'agepony.exe printed to stdout - windows_subsystem = "windows" was not applied, so the GUI will flash a console on every launch'
+          $guiSub = Get-PESubsystem $gui
+          Write-Host "agepony.exe subsystem -> $guiSub"
+          if ($guiSub -ne 2) {
+            throw "agepony.exe is subsystem $guiSub, expected 2 (GUI) - windows_subsystem = 'windows' was not applied, so the GUI will flash a console on every launch"
+          }
+
+          $cliSub = Get-PESubsystem $cli
+          Write-Host "agepony-cli.exe subsystem -> $cliSub"
+          if ($cliSub -ne 3) {
+            throw "agepony-cli.exe is subsystem $cliSub, expected 3 (console) - launched from Explorer it would have nowhere to print"
           }
 
       - uses: actions/upload-artifact@v4
