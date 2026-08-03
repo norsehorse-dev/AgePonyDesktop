@@ -179,6 +179,17 @@ pub enum ThemeChoice {
 }
 
 impl ThemeChoice {
+    /// Every choice, in the order the Settings screen will offer them.
+    ///
+    /// Nothing in the running UI reads this today: the rail's interim control
+    /// cycles with [`Self::next`] because a three-way segmented control does
+    /// not fit 96pt. The real control lands with the Settings destination, and
+    /// the rail fit test reads this meanwhile, so it is checked rather than
+    /// merely kept.
+    #[cfg_attr(
+        not(test),
+        allow(dead_code, reason = "the Settings destination consumes this")
+    )]
     pub(crate) const ALL: [ThemeChoice; 3] =
         [ThemeChoice::System, ThemeChoice::Light, ThemeChoice::Dark];
 
@@ -187,6 +198,15 @@ impl ThemeChoice {
             ThemeChoice::System => "Auto",
             ThemeChoice::Light => "Light",
             ThemeChoice::Dark => "Dark",
+        }
+    }
+
+    /// The next choice in the cycle, for the rail's one-button control.
+    pub(crate) const fn next(self) -> Self {
+        match self {
+            ThemeChoice::System => ThemeChoice::Light,
+            ThemeChoice::Light => ThemeChoice::Dark,
+            ThemeChoice::Dark => ThemeChoice::System,
         }
     }
 
@@ -540,33 +560,10 @@ impl eframe::App for App {
         // room. Matches PGPony Desktop's RAIL_WIDTH so the two apps sit at the
         // same proportions.
         egui::Panel::left("sidebar")
-            .exact_size(112.0)
+            .exact_size(crate::theme::RAIL_WIDTH)
             .resizable(false)
             .show(ui, |ui| {
-                ui.add_space(14.0);
-                ui.horizontal(|ui| {
-                    ui.add_space(2.0);
-                    let (mark_rect, _) =
-                        ui.allocate_exact_size(egui::Vec2::splat(26.0), egui::Sense::hover());
-                    crate::theme::draw_mark(
-                        ui,
-                        mark_rect,
-                        crate::theme::TEAL_CORE,
-                        ui.visuals().panel_fill,
-                    );
-                    ui.label(
-                        egui::RichText::new("AgePony")
-                            .font(crate::theme::semibold(20.0))
-                            .color(crate::theme::ink(ui)),
-                    );
-                });
-                ui.add_space(10.0);
-                let rule = egui::Rect::from_min_size(
-                    ui.cursor().min,
-                    egui::vec2(ui.available_width(), 2.0),
-                );
-                crate::theme::gradient_rule(ui, rule);
-                ui.add_space(12.0);
+                crate::theme::rail_head(ui);
                 for (i, tab) in Tab::ALL.into_iter().enumerate() {
                     let response =
                         crate::theme::rail_item(ui, tab.icon(), tab.label(), self.tab == tab)
@@ -575,19 +572,35 @@ impl eframe::App for App {
                         self.tab = tab;
                     }
                 }
-                ui.add_space(16.0);
+                // The identity card. Everything here has to wrap rather than
+                // measure to its natural width: the rail is 112px and an
+                // identity called "Laptop classic" is wider than that at any
+                // readable size. The badges are the bare ◆ for the same reason
+                // -- "◆ quantum-safe" as a capsule does not fit, and a clipped
+                // capsule reads as a rendering fault rather than as a label.
+                ui.add_space(crate::theme::space::LG);
                 ui.separator();
-                ui.add_space(8.0);
-                ui.label("Active identity");
+                ui.add_space(crate::theme::space::SM);
+                crate::theme::section(ui, "Identity");
                 match self.store.active() {
                     Some(entry) => {
-                        ui.strong(&entry.label);
-                        if entry.kind.is_post_quantum() {
-                            ui.colored_label(crate::theme::PQ_BADGE, "◆ quantum-safe");
-                        }
-                        if entry.encrypted {
-                            crate::theme::passphrase_badge(ui);
-                        }
+                        ui.add(
+                            egui::Label::new(
+                                egui::RichText::new(&entry.label)
+                                    .font(egui::FontId::proportional(12.5))
+                                    .color(crate::theme::ink(ui)),
+                            )
+                            .wrap(),
+                        );
+                        ui.horizontal(|ui| {
+                            if entry.kind.is_post_quantum() {
+                                ui.colored_label(crate::theme::PQ_BADGE, "◆")
+                                    .on_hover_text("Quantum-safe");
+                            }
+                            if entry.encrypted {
+                                ui.weak("passphrase");
+                            }
+                        });
                     }
                     None => {
                         ui.weak("none yet");
@@ -597,22 +610,25 @@ impl eframe::App for App {
                 // Pinned to the foot of the sidebar. The bottom margin is not
                 // decoration: without it the row sits flush against the window
                 // edge and reads as clipped.
+                // One cycling button, not a three-way segmented control.
+                // `segmented` divides the available width evenly, and three
+                // segments of a 96px interior leaves 32px each, which clips
+                // "Light" and "Dark". This is temporary: appearance belongs on
+                // the Settings destination, where there is room for the real
+                // control, and it moves there when that screen lands.
                 ui.with_layout(egui::Layout::bottom_up(egui::Align::LEFT), |ui| {
-                    ui.add_space(14.0);
-                    let selected = ThemeChoice::ALL
-                        .iter()
-                        .position(|c| *c == self.theme)
-                        .unwrap_or(0);
-                    let labels: Vec<&str> = ThemeChoice::ALL.iter().map(|c| c.label()).collect();
-                    if let Some(i) = crate::theme::segmented(ui, &labels, selected) {
-                        if let Some(choice) = ThemeChoice::ALL.get(i) {
-                            self.theme = *choice;
-                            choice.apply(ui.ctx());
-                        }
+                    ui.add_space(crate::theme::space::MD);
+                    let next = self.theme.next();
+                    if crate::theme::secondary_button(ui, self.theme.label())
+                        .on_hover_text(format!("Appearance. Click for {}.", next.label()))
+                        .clicked()
+                    {
+                        self.theme = next;
+                        next.apply(ui.ctx());
                     }
-                    ui.add_space(4.0);
+                    ui.add_space(crate::theme::space::TIGHT);
                     crate::theme::section(ui, "Appearance");
-                    ui.add_space(8.0);
+                    ui.add_space(crate::theme::space::SM);
                     ui.separator();
                 });
             });

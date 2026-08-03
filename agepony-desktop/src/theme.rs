@@ -944,6 +944,44 @@ pub fn danger_ink(ui: &Ui) -> Color32 {
     }
 }
 
+/// How wide the navigation rail is.
+///
+/// Lives here rather than at the call site because the rail's contents have to
+/// be sized against it, and a test checks that they fit. Matches PGPony
+/// Desktop's `RAIL_WIDTH`.
+pub const RAIL_WIDTH: f32 = 112.0;
+
+/// The usable width inside the rail, once its own padding is taken off.
+pub const RAIL_INNER: f32 = RAIL_WIDTH - space::SM * 2.0;
+
+/// The rail's masthead: the mark over the wordmark, both centred, then a rule.
+///
+/// Stacked rather than side by side. At 180px the mark and a 20pt wordmark fit
+/// on one line; at 112 they do not, and the wordmark was clipped mid-word.
+pub fn rail_head(ui: &mut Ui) {
+    ui.add_space(space::LG);
+    ui.vertical_centered(|ui| {
+        let (mark, _) = ui.allocate_exact_size(Vec2::splat(34.0), Sense::hover());
+        draw_gradient_mark(ui.painter(), mark);
+        ui.add_space(space::SM);
+        ui.label(
+            RichText::new("AgePony")
+                .font(semibold(WORDMARK_SIZE))
+                .color(ink(ui)),
+        );
+    });
+    ui.add_space(space::MD);
+    let rule = Rect::from_min_size(ui.cursor().min, Vec2::new(ui.available_width(), 2.0));
+    gradient_rule(ui, rule);
+    ui.add_space(space::SM);
+}
+
+/// The wordmark's type size. Named so the fit test can use the same number.
+pub const WORDMARK_SIZE: f32 = 14.0;
+
+/// The rail's label type size. Named for the same reason.
+pub const RAIL_LABEL_SIZE: f32 = 11.5;
+
 /// One destination in the navigation rail: an icon over a centred label.
 ///
 /// ## One selection indicator, not two
@@ -962,7 +1000,7 @@ pub fn danger_ink(ui: &Ui) -> Color32 {
 pub fn rail_item(ui: &mut Ui, glyph: char, label: &str, selected: bool) -> Response {
     let width = ui.available_width();
     let icon_size = 19.0;
-    let label_font = FontId::proportional(11.5);
+    let label_font = FontId::proportional(RAIL_LABEL_SIZE);
 
     let galley = ui.painter().layout(
         label.to_owned(),
@@ -1549,6 +1587,85 @@ mod tests {
                 seen.insert(glyph),
                 "{} reuses a glyph another destination already has",
                 tab.label()
+            );
+        }
+    }
+
+    /// How wide `text` renders in `face` at `size`, in points.
+    ///
+    /// Advance widths only, so it ignores kerning. Kerning tightens text, so
+    /// this over-estimates slightly, which is the safe direction for a fit
+    /// check.
+    fn text_width(face: &ttf_parser::Face, text: &str, size: f32) -> f32 {
+        let upem = f32::from(face.units_per_em());
+        let units: f32 = text
+            .chars()
+            .map(|c| {
+                face.glyph_index(c)
+                    .and_then(|g| face.glyph_hor_advance(g))
+                    .unwrap_or(0)
+            })
+            .map(f32::from)
+            .sum();
+        units / upem * size
+    }
+
+    /// The widest single word, which is what actually has to fit: a label wider
+    /// than its container wraps, but one *word* wider than its container
+    /// cannot, and clips instead.
+    fn widest_word(face: &ttf_parser::Face, text: &str, size: f32) -> f32 {
+        text.split_whitespace()
+            .map(|w| text_width(face, w, size))
+            .fold(0.0_f32, f32::max)
+    }
+
+    #[test]
+    fn everything_pinned_in_the_rail_fits_the_rail() {
+        // The rail went from 180pt to 112pt when it gained icons, and the
+        // contents did not come with it: the wordmark was still being drawn at
+        // 20pt beside a 26pt mark, so it rendered as "AgePon" with the y cut
+        // off, and the three-way appearance control clipped its last segment.
+        // Neither is a compile error and neither shows up in any other test,
+        // because clipping is a drawing outcome, not a layout failure egui will
+        // complain about.
+        //
+        // Advance widths from the shipped faces are enough to catch it. A word
+        // that does not fit cannot wrap out of trouble.
+        let regular = ttf_parser::Face::parse(
+            include_bytes!("../assets/fonts/Inter-Regular-subset.ttf"),
+            0,
+        )
+        .expect("readable font");
+        let semi = ttf_parser::Face::parse(
+            include_bytes!("../assets/fonts/Inter-SemiBold-subset.ttf"),
+            0,
+        )
+        .expect("readable font");
+
+        let wordmark = text_width(&semi, "AgePony", WORDMARK_SIZE);
+        assert!(
+            wordmark <= RAIL_INNER,
+            "the wordmark is {wordmark:.1}pt wide and the rail's interior is {RAIL_INNER}pt"
+        );
+
+        for tab in crate::app::Tab::ALL {
+            let w = widest_word(&regular, tab.label(), RAIL_LABEL_SIZE);
+            assert!(
+                w <= RAIL_INNER,
+                "the rail label {:?} has a {w:.1}pt word and the rail's interior is {RAIL_INNER}pt",
+                tab.label()
+            );
+        }
+
+        // The appearance button, label plus egui's button padding.
+        let padding = 24.0;
+        for choice in crate::app::ThemeChoice::ALL {
+            let w = text_width(&regular, choice.label(), 14.0) + padding;
+            assert!(
+                w <= RAIL_INNER,
+                "the appearance button reads {:?} at {w:.1}pt and the rail's interior is \
+                 {RAIL_INNER}pt",
+                choice.label()
             );
         }
     }
