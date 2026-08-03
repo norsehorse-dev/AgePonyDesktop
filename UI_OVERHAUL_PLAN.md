@@ -81,8 +81,8 @@ codepoint is declared twice, and no text face accidentally covers an icon codepo
 
 1. **Scales, surface ladder, icon font, radius fix.** — *done, 17 tests green*
 2. **Rail.** — *done*
-3. `theme` components: `screen_head`, `status_bar`, `modal`, `queue_row`, `drop_zone`, badges on the
-   new radius.
+3. `theme` components: `screen_head`, `status_bar`, `modal`, `queue_row`, `drop_zone`. — *done, 19
+   tests green*
 4. `panels/files.rs`: merge encrypt and decrypt behind one destination, with the grouped queue.
    `EncryptState` and `DecryptState` fold into one `FilesState`; the crypto calls do not change.
 5. `panels/settings.rs`: appearance, and whatever else has been living in corners.
@@ -90,8 +90,16 @@ codepoint is declared twice, and no text face accidentally covers an icon codepo
    import into modals.
 7. Delete the dead vocabulary from `theme.rs` once nothing calls it.
 
-Steps 1 and 2 are self-contained and already fix both defects the users reported, so they can ship
-ahead of the rest if a 1.0.1 is wanted before the redesign lands.
+Steps 1 to 3 are self-contained and already fix both defects the users reported, so they can ship
+ahead of the rest if a 1.0.1 is wanted before the redesign lands. Nothing calls the step 3 components
+yet, which is deliberate: they are the vocabulary step 4 is written in, and landing them separately
+keeps the panel rewrite from being reviewed alongside four hundred lines of drawing code.
+
+Step 3 turned up one thing worth recording. `f32::clamp` propagates NaN rather than clamping it, so
+`0.0 / 0.0` on a zero-length file survives a `clamp(0.0, 1.0)` and becomes a rectangle with a NaN
+width. `agepony-core` and `tasks.rs` both special-case a zero denominator already, so nothing live
+could reach it, but the guard is now explicit in `theme::fill_fraction` and tested, because a drawing
+primitive should not depend on every caller upstream staying careful.
 
 ## Decisions taken, and the ones still open
 

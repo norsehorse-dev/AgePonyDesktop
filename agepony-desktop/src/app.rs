@@ -568,13 +568,9 @@ impl eframe::App for App {
                 crate::theme::gradient_rule(ui, rule);
                 ui.add_space(12.0);
                 for (i, tab) in Tab::ALL.into_iter().enumerate() {
-                    let response = crate::theme::rail_item(
-                        ui,
-                        tab.icon(),
-                        tab.label(),
-                        self.tab == tab,
-                    )
-                    .on_hover_text(format!("{}{}", command_symbol(), i + 1));
+                    let response =
+                        crate::theme::rail_item(ui, tab.icon(), tab.label(), self.tab == tab)
+                            .on_hover_text(format!("{}{}", command_symbol(), i + 1));
                     if response.clicked() {
                         self.tab = tab;
                     }

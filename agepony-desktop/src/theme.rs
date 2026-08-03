@@ -352,11 +352,14 @@ fn install_style(ctx: &Context) {
         // near-black ground, which is most of why they did not read as
         // clickable. Give the resting state a real edge, and make the box big
         // enough to aim at.
-        v.widgets.inactive.bg_stroke = egui::Stroke::new(1.5, if v.dark_mode {
-            Color32::from_rgb(0x2C, 0x3D, 0x3A)
-        } else {
-            Color32::from_rgb(0xC3, 0xD4, 0xD1)
-        });
+        v.widgets.inactive.bg_stroke = egui::Stroke::new(
+            1.5,
+            if v.dark_mode {
+                Color32::from_rgb(0x2C, 0x3D, 0x3A)
+            } else {
+                Color32::from_rgb(0xC3, 0xD4, 0xD1)
+            },
+        );
         style.spacing.icon_width = 17.0;
         style.spacing.icon_width_inner = 10.0;
     });
@@ -502,7 +505,7 @@ pub fn progress(ui: &mut Ui, fraction: f32, text: &str) {
     let painter = ui.painter();
     painter.rect_filled(rect, radius, TEAL_CORE.linear_multiply(0.10));
 
-    let fraction = fraction.clamp(0.0, 1.0);
+    let fraction = fill_fraction(fraction);
     if fraction > 0.001 {
         let filled = Rect::from_min_size(
             rect.min,
@@ -603,6 +606,344 @@ pub fn capsule(ui: &mut Ui, text: &str, colour: Color32) {
     ui.painter().galley(rect.min + pad, galley, colour);
 }
 
+/// The header every destination opens with: what this screen is, one sentence
+/// saying what it does, and the actions that belong to it.
+///
+/// Before this, a screen dropped you straight into controls. A title and a
+/// sentence cost one line each and answer "where am I and what is this for"
+/// without anyone having to guess from the widgets.
+///
+/// `actions` is laid out right-aligned on the same line as the title, so the
+/// primary action for a screen always sits in the same place.
+pub fn screen_head(ui: &mut Ui, title: &str, subtitle: &str, actions: impl FnOnce(&mut Ui)) {
+    ui.add_space(space::SECTION);
+    ui.horizontal_top(|ui| {
+        ui.vertical(|ui| {
+            ui.label(RichText::new(title).font(semibold(20.0)).color(ink(ui)));
+            ui.add_space(space::TIGHT);
+            ui.label(
+                RichText::new(subtitle)
+                    .font(FontId::proportional(13.0))
+                    .color(ui.visuals().weak_text_color()),
+            );
+        });
+        // right_to_left so the buttons pack from the right edge inwards and the
+        // primary one lands in the same spot on every screen regardless of how
+        // many secondaries sit beside it.
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), actions);
+    });
+    ui.add_space(space::LG);
+    let rect = egui::Rect::from_min_size(ui.cursor().min, Vec2::new(ui.available_width(), 1.0));
+    ui.painter().rect_filled(
+        rect,
+        CornerRadius::ZERO,
+        ui.visuals().widgets.noninteractive.bg_stroke.color,
+    );
+    ui.add_space(space::SECTION);
+}
+
+/// The strip along the foot of the window: what the app is doing, and a quiet
+/// detail on the right.
+///
+/// Status used to be a label dropped wherever there was room, which meant it
+/// moved between screens and pushed layout around when it appeared. A fixed
+/// strip is always in the same place and costs nothing when there is nothing to
+/// say.
+pub fn status_bar(ui: &mut Ui, message: &str, detail: &str, error: bool) {
+    let colour = if error { danger_ink(ui) } else { TEAL_CORE };
+    ui.horizontal(|ui| {
+        ui.add_space(space::SCREEN - space::SM);
+        let (dot, _) = ui.allocate_exact_size(Vec2::splat(7.0), Sense::hover());
+        ui.painter().circle_filled(dot.center(), 3.5, colour);
+        ui.add_space(space::SM - space::TIGHT);
+        ui.label(
+            RichText::new(message)
+                .font(FontId::proportional(12.5))
+                .color(if error {
+                    colour
+                } else {
+                    ui.visuals().text_color()
+                }),
+        );
+        if !detail.is_empty() {
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.add_space(space::SCREEN - space::SM);
+                ui.label(
+                    RichText::new(detail)
+                        .font(FontId::new(11.0, FontFamily::Monospace))
+                        .color(ui.visuals().weak_text_color()),
+                );
+            });
+        }
+    });
+}
+
+/// A branded modal: title, body, and a dimmed backdrop that dismisses it.
+///
+/// Rename, delete and identity import used to expand the row they belonged to,
+/// which pushed the rest of the list down the screen and left you reading a
+/// form where a list had been a moment ago. Deleting an identity is also the
+/// one action in the app that destroys data, and an action like that should
+/// have to be dismissed rather than scrolled past.
+///
+/// Returns `true` when the modal asked to close: the backdrop was clicked, or
+/// Escape was pressed, or the body called [`egui::Ui::close`].
+pub fn modal<R>(ctx: &Context, id: &str, title: &str, add: impl FnOnce(&mut Ui) -> R) -> (R, bool) {
+    // style_of, not style: egui 0.35 keeps a Style per theme rather than one
+    // current one, so the modal has to ask which theme is live first.
+    let visuals = ctx.style_of(ctx.theme()).visuals.clone();
+    let frame = egui::Frame::new()
+        .fill(visuals.window_fill)
+        .stroke(Stroke::new(1.0, visuals.window_stroke.color))
+        .corner_radius(CornerRadius::same(radius::LG))
+        .inner_margin(egui::Margin::same(
+            i8::try_from(space::SECTION as i32).unwrap_or(24),
+        ))
+        .shadow(egui::epaint::Shadow {
+            offset: [0, 12],
+            blur: 40,
+            spread: 0,
+            color: Color32::from_black_alpha(if visuals.dark_mode { 150 } else { 60 }),
+        });
+
+    let response = egui::Modal::new(egui::Id::new(id))
+        .frame(frame)
+        .backdrop_color(Color32::from_black_alpha(if visuals.dark_mode {
+            170
+        } else {
+            110
+        }))
+        .show(ctx, |ui| {
+            ui.set_width(400.0);
+            ui.label(RichText::new(title).font(semibold(16.0)).color(ink(ui)));
+            ui.add_space(space::SM);
+            add(ui)
+        });
+
+    let closed = response.should_close();
+    (response.inner, closed)
+}
+
+/// What a queued file is doing.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub enum RowState {
+    /// Waiting its turn.
+    Queued,
+    /// Running, with a fraction between 0 and 1.
+    Running(f32),
+    /// Finished, output written.
+    Done,
+    /// Failed. The reason belongs in the row's detail line, not here.
+    Failed,
+}
+
+/// One file in the queue: what it is, what it will become, and where it got to.
+///
+/// The detail line states the output name *before* anything runs. That is the
+/// cheapest possible answer to "am I about to seal this to the wrong person or
+/// write over something", and it costs a line that was empty anyway.
+///
+/// Returns true when the row's dismiss control was clicked.
+pub fn queue_row(ui: &mut Ui, glyph: char, name: &str, detail: &str, state: RowState) -> bool {
+    let mut dismissed = false;
+    let frame = egui::Frame::new()
+        .fill(card_fill(ui))
+        .stroke(Stroke::new(
+            1.0,
+            ui.visuals().widgets.noninteractive.bg_stroke.color,
+        ))
+        .corner_radius(CornerRadius::same(radius::MD))
+        .inner_margin(egui::Margin::symmetric(
+            i8::try_from(space::LG as i32).unwrap_or(16),
+            i8::try_from(space::MD as i32).unwrap_or(12),
+        ));
+
+    frame.show(ui, |ui| {
+        ui.set_width(ui.available_width());
+        ui.horizontal(|ui| {
+            let tint = match state {
+                RowState::Failed => danger_ink(ui),
+                _ => TEAL_CORE,
+            };
+            let (badge, _) = ui.allocate_exact_size(Vec2::splat(30.0), Sense::hover());
+            ui.painter().rect_filled(
+                badge,
+                CornerRadius::same(radius::SM),
+                tint.linear_multiply(0.12),
+            );
+            ui.painter().text(
+                badge.center(),
+                egui::Align2::CENTER_CENTER,
+                glyph,
+                FontId::new(16.0, FontFamily::Name(ICON_FONT.into())),
+                tint,
+            );
+            ui.add_space(space::MD - space::SM);
+
+            ui.vertical(|ui| {
+                ui.label(
+                    RichText::new(name)
+                        .font(FontId::proportional(13.5))
+                        .color(ink(ui)),
+                );
+                ui.label(
+                    RichText::new(detail)
+                        .font(FontId::new(11.0, FontFamily::Monospace))
+                        .color(ui.visuals().weak_text_color()),
+                );
+            });
+
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if ui
+                    .add(
+                        egui::Label::new(
+                            icon_text(icon::X, 14.0).color(ui.visuals().weak_text_color()),
+                        )
+                        .sense(Sense::click()),
+                    )
+                    .on_hover_text("Remove from the queue")
+                    .clicked()
+                {
+                    dismissed = true;
+                }
+                ui.add_space(space::SM);
+                match state {
+                    RowState::Queued => {
+                        ui.label(
+                            RichText::new("queued")
+                                .font(FontId::new(11.0, FontFamily::Monospace))
+                                .color(ui.visuals().weak_text_color()),
+                        );
+                    }
+                    RowState::Running(fraction) => {
+                        let fraction = fill_fraction(fraction);
+                        ui.label(
+                            RichText::new(format!("{:.0}%", fraction * 100.0))
+                                .font(FontId::new(11.0, FontFamily::Monospace))
+                                .color(ui.visuals().weak_text_color()),
+                        );
+                        ui.add_space(space::SM);
+                        let (track, _) =
+                            ui.allocate_exact_size(Vec2::new(120.0, 4.0), Sense::hover());
+                        ui.painter().rect_filled(
+                            track,
+                            CornerRadius::same(2),
+                            TEAL_CORE.linear_multiply(0.14),
+                        );
+                        let filled = Rect::from_min_size(
+                            track.min,
+                            Vec2::new(track.width() * fraction, track.height()),
+                        );
+                        ui.painter()
+                            .rect_filled(filled, CornerRadius::same(2), TEAL_CORE);
+                    }
+                    RowState::Done => {
+                        ui.label(
+                            RichText::new("done")
+                                .font(FontId::new(11.0, FontFamily::Monospace))
+                                .color(TEAL_CORE),
+                        );
+                    }
+                    RowState::Failed => {
+                        ui.label(
+                            RichText::new("failed")
+                                .font(FontId::new(11.0, FontFamily::Monospace))
+                                .color(danger_ink(ui)),
+                        );
+                    }
+                }
+            });
+        });
+    });
+    dismissed
+}
+
+/// The empty Files screen: a target you can drop onto, and the button for
+/// people who would rather browse.
+///
+/// `hot` is true while a drag is over the window, which turns the dashes solid
+/// and brightens the wash. Returns true when the button inside it was clicked.
+pub fn drop_zone(ui: &mut Ui, hot: bool) -> bool {
+    let mut clicked = false;
+    let line = if hot {
+        Stroke::new(1.6, TEAL_CORE)
+    } else {
+        Stroke::new(1.4, ui.visuals().widgets.noninteractive.bg_stroke.color)
+    };
+    egui::Frame::new()
+        .fill(card_fill(ui))
+        .stroke(line)
+        .corner_radius(CornerRadius::same(radius::LG))
+        .inner_margin(egui::Margin::symmetric(
+            i8::try_from(space::SCREEN as i32).unwrap_or(32),
+            48,
+        ))
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.vertical_centered(|ui| {
+                ui.label(icon_text(icon::FILE_LOCK, 44.0).color(TEAL_CORE));
+                ui.add_space(space::LG);
+                ui.label(
+                    RichText::new("Drop files here")
+                        .font(semibold(18.0))
+                        .color(ink(ui)),
+                );
+                ui.add_space(space::SM);
+                ui.label(
+                    RichText::new(
+                        "An .age file opens. Anything else gets sealed. Drop a mix \
+                         and AgePony sorts them into two groups.",
+                    )
+                    .font(FontId::proportional(13.0))
+                    .color(ui.visuals().weak_text_color()),
+                );
+                ui.add_space(space::LG);
+                clicked = primary_button(ui, "Choose files…").clicked();
+            });
+        });
+    clicked
+}
+
+/// Sanitise a progress fraction into something safe to multiply a width by.
+///
+/// `f32::clamp` does not do this on its own: it propagates NaN rather than
+/// clamping it, so `0.0 / 0.0` on a zero-length file survives a `clamp(0.0,
+/// 1.0)` and becomes a rectangle with a NaN width. `agepony-core` and
+/// `tasks.rs` both special-case a zero denominator today, so nothing live can
+/// produce one, but a drawing primitive should not depend on every caller
+/// upstream of it staying careful.
+#[must_use]
+pub fn fill_fraction(fraction: f32) -> f32 {
+    if fraction.is_finite() {
+        fraction.clamp(0.0, 1.0)
+    } else {
+        0.0
+    }
+}
+
+/// The card fill for the current theme, one step up from the content pane.
+#[must_use]
+pub fn card_fill(ui: &Ui) -> Color32 {
+    if ui.visuals().dark_mode {
+        Color32::from_rgb(0x14, 0x20, 0x1E)
+    } else {
+        Color32::from_rgb(0xFF, 0xFF, 0xFF)
+    }
+}
+
+/// The destructive colour that reads on the current theme.
+///
+/// [`DANGER`] is tuned for dark and for tinted fills; against a white card it
+/// drops to about 4:1, which is borderline at 14px.
+#[must_use]
+pub fn danger_ink(ui: &Ui) -> Color32 {
+    if ui.visuals().dark_mode {
+        DANGER
+    } else {
+        DANGER_INK
+    }
+}
+
 /// One destination in the navigation rail: an icon over a centred label.
 ///
 /// ## One selection indicator, not two
@@ -655,11 +996,8 @@ pub fn rail_item(ui: &mut Ui, glyph: char, label: &str, selected: bool) -> Respo
             egui::StrokeKind::Inside,
         );
     } else if response.hovered() {
-        ui.painter().rect_filled(
-            rect,
-            CornerRadius::same(radius::MD),
-            visuals.faint_bg_color,
-        );
+        ui.painter()
+            .rect_filled(rect, CornerRadius::same(radius::MD), visuals.faint_bg_color);
     }
 
     let painter = ui.painter();
@@ -1163,12 +1501,64 @@ mod tests {
     }
 
     #[test]
+    fn a_queue_rows_progress_fill_never_leaves_its_track() {
+        // The fraction is a byte counter over a file size. A zero-length file
+        // makes that 0/0, and NaN survives `clamp` untouched -- clamp
+        // propagates NaN rather than clamping it, which is the trap this test
+        // exists to keep shut. Nothing may paint outside the track.
+        let track = 120.0_f32;
+        for fraction in [
+            f32::NAN,
+            f32::NEG_INFINITY,
+            -3.0,
+            0.0,
+            0.5,
+            1.0,
+            1.7,
+            f32::INFINITY,
+        ] {
+            let width = track * fill_fraction(fraction);
+            assert!(
+                (0.0..=track).contains(&width),
+                "fraction {fraction} painted {width} of a {track} track"
+            );
+        }
+    }
+
+    #[test]
+    fn every_rail_destination_has_its_own_icon() {
+        // Two destinations sharing a glyph is not a compile error and looks
+        // deliberate on screen, so nothing else would catch it.
+        let rail = [
+            crate::app::Tab::Encrypt,
+            crate::app::Tab::Decrypt,
+            crate::app::Tab::Identities,
+            crate::app::Tab::Recipients,
+        ];
+        let mut seen = std::collections::HashSet::new();
+        for tab in rail {
+            let glyph = tab.icon();
+            assert!(
+                ICONS.contains(&glyph),
+                "{} uses U+{:04X}, which is not declared in ICONS, so nothing checks the \
+                 font can draw it",
+                tab.label(),
+                glyph as u32
+            );
+            assert!(
+                seen.insert(glyph),
+                "{} reuses a glyph another destination already has",
+                tab.label()
+            );
+        }
+    }
+
+    #[test]
     fn the_shipped_fonts_stay_small() {
         // Subsetting is what makes embedding them defensible against the
         // single-self-contained-binary goal. If a regeneration ever forgets to
         // subset, the faces jump back to ~600 KB each and this catches it.
-        let total: usize =
-            FACES.iter().map(|(_, b)| b.len()).sum::<usize>() + ICON_FACE.1.len();
+        let total: usize = FACES.iter().map(|(_, b)| b.len()).sum::<usize>() + ICON_FACE.1.len();
         assert!(
             total < 400_000,
             "shipped fonts total {total} bytes; they should be subset to well under 400 KB"
