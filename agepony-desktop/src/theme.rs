@@ -59,10 +59,52 @@ pub const ACCENT: Color32 = TEAL_CORE;
 /// The post-quantum badge colour.
 pub const PQ_BADGE: Color32 = TEAL_CORE;
 
+// ------------------------------------------------------------------ scale ---
+
+/// The spacing scale. Six steps, and nothing off it.
+///
+/// Every gap in the UI is one of these. The rule is not aesthetic bookkeeping:
+/// before this existed, `app.rs` alone spaced things by 14, 10, 12, 2, 16, 8 and
+/// 4, none of which meant anything, and the result read as approximate because
+/// it was. Mirrors PGPony Desktop's `Spacing` object so the two apps lay out at
+/// the same rhythm.
+pub mod space {
+    /// Between a label and the thing it labels.
+    pub const TIGHT: f32 = 4.0;
+    /// Between siblings in a row.
+    pub const SM: f32 = 8.0;
+    /// Between rows in a list.
+    pub const MD: f32 = 12.0;
+    /// Inside a card.
+    pub const LG: f32 = 16.0;
+    /// Between sections of a screen.
+    pub const SECTION: f32 = 24.0;
+    /// The screen's own margin.
+    pub const SCREEN: f32 = 32.0;
+}
+
+/// The corner-radius scale. Three steps, chosen by how big the thing is.
+///
+/// One radius for everything is what produced the two defects a user reported
+/// on 1.0.0: a single value of 12 was applied to every widget state, and egui
+/// draws a checkbox about 14px square and a `selectable_label` about 20px tall.
+/// At 12 the first is a circle and the second is an oval, so a checkbox stopped
+/// reading as a checkbox. A radius only means "slightly rounded" relative to the
+/// box it is rounding, which is why this is a scale and not a constant.
+pub mod radius {
+    /// Checkboxes, badges, key blocks, chips. Small enough that 12 would round
+    /// them away entirely.
+    pub const SM: u8 = 6;
+    /// Buttons, cards, list rows, rail items.
+    pub const MD: u8 = 12;
+    /// Panels, the drop zone, modals.
+    pub const LG: u8 = 18;
+}
+
 /// Corner radius for buttons, from the iOS `RoundedRectangle(cornerRadius: 14)`.
-const R_BUTTON: u8 = 12;
+const R_BUTTON: u8 = radius::MD;
 /// Corner radius for key blocks and cards.
-const R_BLOCK: u8 = 10;
+const R_BLOCK: u8 = radius::MD;
 
 // ------------------------------------------------------------------ fonts ---
 
@@ -72,6 +114,8 @@ pub const UI_FONT: &str = "Inter";
 pub const UI_FONT_SEMIBOLD: &str = "InterSemiBold";
 /// Font family name for key strings.
 pub const MONO_FONT: &str = "JetBrainsMono";
+/// Font family name for the interface icons.
+pub const ICON_FONT: &str = "Lucide";
 
 /// Install fonts and the AgePony look. Call once at startup.
 pub fn install(ctx: &Context) {
@@ -104,6 +148,10 @@ fn install_fonts(ctx: &Context) {
             MONO_FONT,
             &include_bytes!("../assets/fonts/JetBrainsMono-Regular-subset.ttf")[..],
         ),
+        (
+            ICON_FONT,
+            &include_bytes!("../assets/fonts/Lucide-subset.ttf")[..],
+        ),
     ] {
         fonts
             .font_data
@@ -123,7 +171,108 @@ fn install_fonts(ctx: &Context) {
         vec![UI_FONT_SEMIBOLD.to_owned(), UI_FONT.to_owned()],
     );
 
+    // Icons get a family of their own rather than being appended to the
+    // proportional chain. Sharing a family would let a missing icon silently
+    // fall through to Inter and render as a box, which is the exact failure the
+    // GLYPHS test exists to stop; a dedicated family makes a missing icon a
+    // visible blank that the icon test catches instead.
+    fonts.families.insert(
+        FontFamily::Name(ICON_FONT.into()),
+        vec![ICON_FONT.to_owned()],
+    );
+
     ctx.set_fonts(fonts);
+}
+
+// ------------------------------------------------------------------ icons ---
+
+/// The interface icons, named as Lucide names them.
+///
+/// These are Lucide's own Private Use Area codepoints, carried over rather than
+/// remapped to a tidy range, so the mapping can be checked against upstream's
+/// `info.json` by anyone who doubts it. `assets/fonts/Lucide-subset.ttf` holds
+/// exactly these nineteen glyphs and nothing else: 8 KB out of the 848 KB the
+/// full face weighs.
+///
+/// Adding an icon means adding it here, adding it to [`ICONS`], and regenerating
+/// the subset. The test below fails if the font cannot draw one of these, which
+/// is the same contract [`GLYPHS`] enforces for text.
+pub mod icon {
+    /// The Files destination.
+    pub const FILES: char = '\u{E0CF}';
+    /// The Identities destination.
+    pub const KEY_ROUND: char = '\u{E4A3}';
+    /// The Recipients destination.
+    pub const USERS: char = '\u{E1A4}';
+    /// The Settings destination.
+    pub const SETTINGS: char = '\u{E154}';
+    /// Choose files.
+    pub const UPLOAD: char = '\u{E19E}';
+    /// Create something.
+    pub const PLUS: char = '\u{E13D}';
+    /// Run the queue.
+    pub const ARROW_RIGHT: char = '\u{E049}';
+    /// Remove one row; dismiss.
+    pub const X: char = '\u{E1B2}';
+    /// A ticked checkbox, and confirmation.
+    pub const CHECK: char = '\u{E06C}';
+    /// Port an identity from the phone.
+    pub const QR_CODE: char = '\u{E1DF}';
+    /// Copy a recipient to the clipboard.
+    pub const COPY: char = '\u{E09E}';
+    /// Delete an identity or a recipient.
+    pub const TRASH_2: char = '\u{E18E}';
+    /// Rename.
+    pub const PENCIL: char = '\u{E1F9}';
+    /// Export an identity file.
+    pub const DOWNLOAD: char = '\u{E0B2}';
+    /// A queued file that will be sealed.
+    pub const LOCK: char = '\u{E10B}';
+    /// A queued file that will be opened.
+    pub const LOCK_OPEN: char = '\u{E10C}';
+    /// A finished row.
+    pub const CIRCLE_CHECK: char = '\u{E226}';
+    /// A failed row.
+    pub const CIRCLE_ALERT: char = '\u{E077}';
+    /// The empty drop zone.
+    pub const FILE_LOCK: char = '\u{E31E}';
+}
+
+/// Every icon the UI draws. The companion to [`GLYPHS`], for the icon face.
+pub const ICONS: &[char] = &[
+    icon::FILES,
+    icon::KEY_ROUND,
+    icon::USERS,
+    icon::SETTINGS,
+    icon::UPLOAD,
+    icon::PLUS,
+    icon::ARROW_RIGHT,
+    icon::X,
+    icon::CHECK,
+    icon::QR_CODE,
+    icon::COPY,
+    icon::TRASH_2,
+    icon::PENCIL,
+    icon::DOWNLOAD,
+    icon::LOCK,
+    icon::LOCK_OPEN,
+    icon::CIRCLE_CHECK,
+    icon::CIRCLE_ALERT,
+    icon::FILE_LOCK,
+];
+
+/// An icon as [`RichText`], ready to place in a label or a button.
+///
+/// The icon face is its own family, so this cannot silently fall back to Inter
+/// and draw a box.
+#[must_use]
+pub fn icon_text(glyph: char, size: f32) -> RichText {
+    RichText::new(glyph).font(FontId::new(size, FontFamily::Name(ICON_FONT.into())))
+}
+
+/// Draw an icon inline at `size` in `colour`.
+pub fn icon(ui: &mut Ui, glyph: char, size: f32, colour: Color32) {
+    ui.label(icon_text(glyph, size).color(colour));
 }
 
 /// A `FontId` in the semibold face at `size`.
@@ -153,6 +302,27 @@ fn install_style(ctx: &Context) {
         style.spacing.menu_margin = 8.into();
 
         let v = &mut style.visuals;
+
+        // The surface ladder. egui's defaults are neutral greys, and a teal
+        // accent scattered over neutral grey is what "it's all grey and boring"
+        // actually described: the palette was never the problem, the ground it
+        // sat on was. Every step here carries a little of the brand hue, so the
+        // window reads as one material rather than as an accent colour applied
+        // to a default.
+        if v.dark_mode {
+            v.panel_fill = Color32::from_rgb(0x0B, 0x12, 0x11);
+            v.window_fill = Color32::from_rgb(0x10, 0x19, 0x17);
+            v.extreme_bg_color = Color32::from_rgb(0x07, 0x0D, 0x0C);
+            v.faint_bg_color = Color32::from_rgb(0x14, 0x20, 0x1E);
+            v.window_stroke.color = Color32::from_rgb(0x2C, 0x3D, 0x3A);
+        } else {
+            v.panel_fill = Color32::from_rgb(0xEF, 0xF4, 0xF3);
+            v.window_fill = Color32::from_rgb(0xF7, 0xFA, 0xF9);
+            v.extreme_bg_color = Color32::from_rgb(0xFF, 0xFF, 0xFF);
+            v.faint_bg_color = Color32::from_rgb(0xE7, 0xEF, 0xEE);
+            v.window_stroke.color = Color32::from_rgb(0xC3, 0xD4, 0xD1);
+        }
+
         v.hyperlink_color = TEAL_CORE;
         v.selection.bg_fill = TEAL_CORE.linear_multiply(0.35);
         v.selection.stroke.color = TEAL_CORE;
@@ -161,6 +331,13 @@ fn install_style(ctx: &Context) {
         v.widgets.open.bg_stroke.color = TEAL_DEEP;
         v.error_fg_color = DANGER;
 
+        // radius::SM, not radius::MD. This value reaches only the widgets egui
+        // draws for itself, because every surface this file paints by hand -- the
+        // buttons, the cards, the segmented control, the key blocks -- passes its
+        // own radius to `rect_filled`. What is left is checkboxes and
+        // `selectable_label` rows, both of which are small, and at 12 the first
+        // became a circle and the second an oval. A user reported exactly that
+        // about 1.0.0. Small widgets take the small radius.
         for w in [
             &mut v.widgets.noninteractive,
             &mut v.widgets.inactive,
@@ -168,8 +345,20 @@ fn install_style(ctx: &Context) {
             &mut v.widgets.active,
             &mut v.widgets.open,
         ] {
-            w.corner_radius = CornerRadius::same(R_BUTTON);
+            w.corner_radius = CornerRadius::same(radius::SM);
         }
+
+        // An unchecked checkbox with no border is a faint grey square on a
+        // near-black ground, which is most of why they did not read as
+        // clickable. Give the resting state a real edge, and make the box big
+        // enough to aim at.
+        v.widgets.inactive.bg_stroke = egui::Stroke::new(1.5, if v.dark_mode {
+            Color32::from_rgb(0x2C, 0x3D, 0x3A)
+        } else {
+            Color32::from_rgb(0xC3, 0xD4, 0xD1)
+        });
+        style.spacing.icon_width = 17.0;
+        style.spacing.icon_width_inner = 10.0;
     });
 }
 
@@ -412,6 +601,95 @@ pub fn capsule(ui: &mut Ui, text: &str, colour: Color32) {
         colour.linear_multiply(0.12),
     );
     ui.painter().galley(rect.min + pad, galley, colour);
+}
+
+/// One destination in the navigation rail: an icon over a centred label.
+///
+/// ## One selection indicator, not two
+///
+/// The sidebar this replaces used `selectable_label`, which paints its own
+/// background, and then drew a gradient bar inside the same row on top of it.
+/// A user reported the result as "an oval highlight but also a bar to the left
+/// of the text", which is exactly what it was: two markers for one piece of
+/// state, neither of them chosen. Here the selected state is a single tinted
+/// fill carrying the brand ramp, with a border to give it an edge on both
+/// themes.
+///
+/// The whole item is allocated at a fixed width and everything is centred
+/// within it, so a two-word label wraps inside the rail instead of measuring to
+/// its own natural width and spilling into the content pane.
+pub fn rail_item(ui: &mut Ui, glyph: char, label: &str, selected: bool) -> Response {
+    let width = ui.available_width();
+    let icon_size = 19.0;
+    let label_font = FontId::proportional(11.5);
+
+    let galley = ui.painter().layout(
+        label.to_owned(),
+        label_font,
+        Color32::PLACEHOLDER,
+        width - space::SM * 2.0,
+    );
+    let height = space::MD + icon_size + space::TIGHT + galley.size().y + space::MD;
+    let (rect, response) = ui.allocate_exact_size(Vec2::new(width, height), Sense::click());
+
+    let visuals = ui.visuals();
+    let ink = if selected || response.hovered() {
+        strong_text(visuals.dark_mode)
+    } else {
+        visuals.weak_text_color()
+    };
+
+    if selected {
+        // The brand ramp, at the weight a background can carry. Drawing the
+        // full-strength gradient here would put 4:1 text on a saturated fill.
+        let painter = ui.painter();
+        painter.rect_filled(
+            rect,
+            CornerRadius::same(radius::MD),
+            CYAN_LIGHT.linear_multiply(if visuals.dark_mode { 0.16 } else { 0.20 }),
+        );
+        painter.rect_stroke(
+            rect,
+            CornerRadius::same(radius::MD),
+            egui::Stroke::new(1.0, TEAL_CORE.linear_multiply(0.55)),
+            egui::StrokeKind::Inside,
+        );
+    } else if response.hovered() {
+        ui.painter().rect_filled(
+            rect,
+            CornerRadius::same(radius::MD),
+            visuals.faint_bg_color,
+        );
+    }
+
+    let painter = ui.painter();
+    let icon_top = rect.top() + space::MD;
+    painter.text(
+        Pos2::new(rect.center().x, icon_top),
+        egui::Align2::CENTER_TOP,
+        glyph,
+        FontId::new(icon_size, FontFamily::Name(ICON_FONT.into())),
+        ink,
+    );
+    painter.galley(
+        Pos2::new(
+            rect.center().x - galley.size().x / 2.0,
+            icon_top + icon_size + space::TIGHT,
+        ),
+        galley,
+        ink,
+    );
+
+    response
+}
+
+/// The text colour that reads as "on" against either theme's ladder.
+fn strong_text(dark: bool) -> Color32 {
+    if dark {
+        Color32::from_rgb(0xE8, 0xF0, 0xEE)
+    } else {
+        Color32::from_rgb(0x0C, 0x1A, 0x18)
+    }
 }
 
 /// The primary action button: solid `tealCore`, white text, pressing to
@@ -718,6 +996,59 @@ mod tests {
         ),
     ];
 
+    /// The icon face, checked separately: it holds icons and nothing else, so
+    /// requiring it to cover [`GLYPHS`] or ASCII would be wrong.
+    const ICON_FACE: (&str, &[u8]) = (
+        "Lucide",
+        include_bytes!("../assets/fonts/Lucide-subset.ttf"),
+    );
+
+    #[test]
+    fn every_icon_the_ui_draws_exists_in_the_icon_font() {
+        let (name, bytes) = ICON_FACE;
+        let face = ttf_parser::Face::parse(bytes, 0)
+            .unwrap_or_else(|e| panic!("{name} is not a readable font: {e}"));
+        for &c in ICONS {
+            assert!(
+                face.glyph_index(c).is_some(),
+                "{name} has no glyph for U+{:04X} — that icon will render as nothing at all. \
+                 Re-subset the face from lucide-static with this codepoint included.",
+                c as u32
+            );
+        }
+    }
+
+    #[test]
+    fn the_icon_list_has_no_duplicates() {
+        // Two names for one codepoint means one of them is wrong, and the
+        // coverage test above would still pass.
+        let mut seen = std::collections::HashSet::new();
+        for &c in ICONS {
+            assert!(
+                seen.insert(c),
+                "U+{:04X} appears twice in ICONS, so two icon names point at one glyph",
+                c as u32
+            );
+        }
+    }
+
+    #[test]
+    fn icons_do_not_collide_with_the_text_faces() {
+        // If a Private Use codepoint were also present in Inter, an icon drawn
+        // by accident against the proportional family would render as something
+        // plausible rather than as an obvious blank, and the bug would ship.
+        for (name, bytes) in FACES {
+            let face = ttf_parser::Face::parse(bytes, 0).expect("readable font");
+            for &c in ICONS {
+                assert!(
+                    face.glyph_index(c).is_none(),
+                    "{name} unexpectedly covers icon codepoint U+{:04X}",
+                    c as u32
+                );
+            }
+        }
+    }
+
     #[test]
     fn every_symbol_the_ui_draws_exists_in_the_shipped_fonts() {
         for (name, bytes) in FACES {
@@ -836,7 +1167,8 @@ mod tests {
         // Subsetting is what makes embedding them defensible against the
         // single-self-contained-binary goal. If a regeneration ever forgets to
         // subset, the faces jump back to ~600 KB each and this catches it.
-        let total: usize = FACES.iter().map(|(_, b)| b.len()).sum();
+        let total: usize =
+            FACES.iter().map(|(_, b)| b.len()).sum::<usize>() + ICON_FACE.1.len();
         assert!(
             total < 400_000,
             "shipped fonts total {total} bytes; they should be subset to well under 400 KB"

@@ -56,6 +56,15 @@ JetBrains Mono                     SIL Open Font License 1.1
   Subset as above.
   Licence: agepony-desktop/assets/fonts/JETBRAINS-MONO-LICENSE.txt
 
+Lucide
+  Copyright (c) 2026 Lucide Icons and Contributors
+  https://lucide.dev
+  The interface icons. Subset from lucide-static's lucide.ttf to the nineteen
+  glyphs the UI actually draws, which takes it from 848 KB to 8 KB. The
+  codepoints are Lucide's own Private Use Area assignments, kept rather than
+  remapped so the mapping can be checked against upstream's info.json.
+  Licence: agepony-desktop/assets/fonts/LUCIDE-LICENSE.txt
+
 --------------------------------------------------------------------------------
 Supporting
 --------------------------------------------------------------------------------

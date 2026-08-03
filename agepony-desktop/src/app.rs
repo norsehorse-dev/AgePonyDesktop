@@ -38,6 +38,19 @@ impl Tab {
             Tab::Recipients => "Recipients",
         }
     }
+
+    /// The rail glyph for this destination.
+    ///
+    /// Sealing and opening are the same padlock, shut and open. A label alone
+    /// made the rail read as a list of words rather than as somewhere to go.
+    pub(crate) const fn icon(self) -> char {
+        match self {
+            Tab::Encrypt => crate::theme::icon::LOCK,
+            Tab::Decrypt => crate::theme::icon::LOCK_OPEN,
+            Tab::Identities => crate::theme::icon::KEY_ROUND,
+            Tab::Recipients => crate::theme::icon::USERS,
+        }
+    }
 }
 
 /// Everything the encrypt panel remembers between frames.
@@ -522,8 +535,12 @@ impl eframe::App for App {
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        // 112, not 180. The rail carries an icon over a centred label now, so it
+        // needs less width, and the content pane is the thing that wanted the
+        // room. Matches PGPony Desktop's RAIL_WIDTH so the two apps sit at the
+        // same proportions.
         egui::Panel::left("sidebar")
-            .exact_size(180.0)
+            .exact_size(112.0)
             .resizable(false)
             .show(ui, |ui| {
                 ui.add_space(14.0);
@@ -551,27 +568,13 @@ impl eframe::App for App {
                 crate::theme::gradient_rule(ui, rule);
                 ui.add_space(12.0);
                 for (i, tab) in Tab::ALL.into_iter().enumerate() {
-                    let selected = self.tab == tab;
-                    let response = ui
-                        .selectable_label(selected, tab.label())
-                        .on_hover_text(format!("{}{}", command_symbol(), i + 1));
-
-                    // A brand-ramp bar marking the active tab. Quieter than
-                    // tinting the whole row, and it keeps the ramp present on
-                    // every screen without shouting.
-                    if selected {
-                        // Inside the row, not to the left of it: at the panel's
-                        // left edge this was landing outside the clip rect and
-                        // never appeared. The row's own padding leaves room.
-                        let r = response.rect;
-                        crate::theme::gradient(
-                            ui,
-                            egui::Rect::from_min_size(
-                                egui::pos2(r.left() + 1.0, r.top() + 3.0),
-                                egui::vec2(3.0, r.height() - 6.0),
-                            ),
-                        );
-                    }
+                    let response = crate::theme::rail_item(
+                        ui,
+                        tab.icon(),
+                        tab.label(),
+                        self.tab == tab,
+                    )
+                    .on_hover_text(format!("{}{}", command_symbol(), i + 1));
                     if response.clicked() {
                         self.tab = tab;
                     }
