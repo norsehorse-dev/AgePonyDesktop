@@ -378,7 +378,7 @@ fn install_style(ctx: &Context) {
     not(test),
     allow(dead_code, reason = "the contract this declares is enforced by tests")
 )]
-pub const GLYPHS: &[char] = &['×', '◆', '⚠', '✓', '…', '⌘', '—', '·', '“', '”'];
+pub const GLYPHS: &[char] = &['×', '◆', '⚠', '✓', '…', '⌘', '—', '·', '“', '”', '→'];
 
 /// Which text colour reads on the current background.
 #[must_use]
@@ -737,15 +737,32 @@ pub enum RowState {
     Failed,
 }
 
+/// What the user did to a queue row this frame.
+#[derive(Default, Clone, Copy)]
+pub struct QueueRowResponse {
+    /// The × was clicked: remove the row.
+    pub dismissed: bool,
+    /// The row itself was clicked while `revealable`: show the output.
+    pub opened: bool,
+}
+
 /// One file in the queue: what it is, what it will become, and where it got to.
 ///
 /// The detail line states the output name *before* anything runs. That is the
 /// cheapest possible answer to "am I about to seal this to the wrong person or
 /// write over something", and it costs a line that was empty anyway.
 ///
-/// Returns true when the row's dismiss control was clicked.
-pub fn queue_row(ui: &mut Ui, glyph: char, name: &str, detail: &str, state: RowState) -> bool {
-    let mut dismissed = false;
+/// With `revealable` set the whole row becomes a click target for "show me the
+/// output", which a finished row earns and a queued one has nothing to answer.
+pub fn queue_row(
+    ui: &mut Ui,
+    glyph: char,
+    name: &str,
+    detail: &str,
+    state: RowState,
+    revealable: bool,
+) -> QueueRowResponse {
+    let mut response = QueueRowResponse::default();
     let frame = egui::Frame::new()
         .fill(card_fill(ui))
         .stroke(Stroke::new(
@@ -758,7 +775,7 @@ pub fn queue_row(ui: &mut Ui, glyph: char, name: &str, detail: &str, state: RowS
             i8::try_from(space::MD as i32).unwrap_or(12),
         ));
 
-    frame.show(ui, |ui| {
+    let inner = frame.show(ui, |ui| {
         ui.set_width(ui.available_width());
         ui.horizontal(|ui| {
             let tint = match state {
@@ -804,7 +821,7 @@ pub fn queue_row(ui: &mut Ui, glyph: char, name: &str, detail: &str, state: RowS
                     .on_hover_text("Remove from the queue")
                     .clicked()
                 {
-                    dismissed = true;
+                    response.dismissed = true;
                 }
                 ui.add_space(space::SM);
                 match state {
@@ -855,7 +872,17 @@ pub fn queue_row(ui: &mut Ui, glyph: char, name: &str, detail: &str, state: RowS
             });
         });
     });
-    dismissed
+    if revealable {
+        let sense = ui.interact(
+            inner.response.rect,
+            ui.id().with(("queue-row", name, detail)),
+            Sense::click(),
+        );
+        if sense.on_hover_text("Show in folder").clicked() {
+            response.opened = true;
+        }
+    }
+    response
 }
 
 /// The empty Files screen: a target you can drop onto, and the button for
@@ -1567,14 +1594,8 @@ mod tests {
     fn every_rail_destination_has_its_own_icon() {
         // Two destinations sharing a glyph is not a compile error and looks
         // deliberate on screen, so nothing else would catch it.
-        let rail = [
-            crate::app::Tab::Encrypt,
-            crate::app::Tab::Decrypt,
-            crate::app::Tab::Identities,
-            crate::app::Tab::Recipients,
-        ];
         let mut seen = std::collections::HashSet::new();
-        for tab in rail {
+        for tab in crate::app::Tab::ALL {
             let glyph = tab.icon();
             assert!(
                 ICONS.contains(&glyph),

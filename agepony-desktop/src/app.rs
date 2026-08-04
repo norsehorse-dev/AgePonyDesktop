@@ -13,14 +13,15 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 use std::path::PathBuf;
 
-/// Which panel the sidebar has selected.
+/// Which destination the rail has selected.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum Tab {
-    /// The encrypt panel.
+    /// Sealing and opening, one screen. The aliases absorb prefs persisted
+    /// before Encrypt and Decrypt merged, so an upgrade keeps the user's other
+    /// preferences instead of failing the whole blob back to defaults.
     #[default]
-    Encrypt,
-    /// The decrypt panel.
-    Decrypt,
+    #[serde(alias = "Encrypt", alias = "Decrypt")]
+    Files,
     /// Identity management.
     Identities,
     /// The recipient book.
@@ -28,48 +29,49 @@ pub enum Tab {
 }
 
 impl Tab {
-    pub(crate) const ALL: [Tab; 4] = [Tab::Encrypt, Tab::Decrypt, Tab::Identities, Tab::Recipients];
+    pub(crate) const ALL: [Tab; 3] = [Tab::Files, Tab::Identities, Tab::Recipients];
 
     pub(crate) const fn label(self) -> &'static str {
         match self {
-            Tab::Encrypt => "Encrypt",
-            Tab::Decrypt => "Decrypt",
+            Tab::Files => "Files",
             Tab::Identities => "Identities",
             Tab::Recipients => "Recipients",
         }
     }
 
     /// The rail glyph for this destination.
-    ///
-    /// Sealing and opening are the same padlock, shut and open. A label alone
-    /// made the rail read as a list of words rather than as somewhere to go.
     pub(crate) const fn icon(self) -> char {
         match self {
-            Tab::Encrypt => crate::theme::icon::LOCK,
-            Tab::Decrypt => crate::theme::icon::LOCK_OPEN,
+            Tab::Files => crate::theme::icon::FILES,
             Tab::Identities => crate::theme::icon::KEY_ROUND,
             Tab::Recipients => crate::theme::icon::USERS,
         }
     }
 }
 
-/// Everything the encrypt panel remembers between frames.
-#[derive(Default)]
-pub struct EncryptState {
-    /// Files queued for encryption.
-    pub inputs: Vec<PathBuf>,
-    /// Names of the book entries that are ticked.
-    pub picked: BTreeSet<String>,
-    /// Recipients typed directly, one per line.
-    pub extra: String,
-    /// Use a passphrase instead of recipients.
-    pub use_passphrase: bool,
-    /// The passphrase, held only while the panel is open.
-    pub passphrase: String,
-    /// ASCII armor the output.
-    pub armor: bool,
-    /// The job in flight, if any.
-    pub job: Option<Running>,
+/// What will happen to a queued file.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FileAction {
+    /// Encrypt it.
+    Seal,
+    /// Decrypt it.
+    Open,
+}
+
+/// One file in the queue, and what has become of it.
+pub struct QueuedFile {
+    /// Where it is.
+    pub path: PathBuf,
+    /// Which group it landed in. Decided by reading the file's header, not its
+    /// name — see [`agepony_core::decrypt::looks_like_age_file`].
+    pub action: FileAction,
+    /// Its size when it was queued, for the row's detail line.
+    pub size: Option<u64>,
+    /// `Ok(output)` once it has been written, `Err(why)` once it has failed,
+    /// `None` while it is still waiting or running. Results are folded in here
+    /// from the finished job, so a row keeps its answer after the job object
+    /// is gone and a re-run knows to leave it alone.
+    pub outcome: Option<Result<PathBuf, String>>,
 }
 
 /// Where the decrypt panel gets its identity.
@@ -84,21 +86,91 @@ pub enum DecryptSource {
     Passphrase,
 }
 
-/// Everything the decrypt panel remembers between frames.
+/// Everything the Files screen remembers between frames.
 #[derive(Default)]
-pub struct DecryptState {
-    /// Files queued for decryption.
-    pub inputs: Vec<PathBuf>,
+pub struct FilesState {
+    /// Every file that has been dropped or chosen, in arrival order.
+    pub queue: Vec<QueuedFile>,
+
+    // ---- sealing --------------------------------------------------------
+    /// Names of the book entries that are ticked.
+    pub picked: BTreeSet<String>,
+    /// Recipients typed directly, one per line.
+    pub extra: String,
+    /// Use a passphrase instead of recipients.
+    pub use_passphrase: bool,
+    /// The sealing passphrase, held only while the screen is open.
+    pub passphrase: String,
+    /// ASCII armor the output.
+    pub armor: bool,
+
+    // ---- opening --------------------------------------------------------
     /// Where the identity comes from.
     pub source: DecryptSource,
     /// Identity files chosen when `source` is [`DecryptSource::File`].
     pub identity_files: Vec<PathBuf>,
     /// The file's passphrase, for [`DecryptSource::Passphrase`].
-    pub passphrase: String,
+    pub open_passphrase: String,
     /// The passphrase that unlocks a protected identity file.
     pub identity_passphrase: String,
-    /// The job in flight, if any.
-    pub job: Option<Running>,
+
+    // ---- in flight ------------------------------------------------------
+    /// The sealing job, if one is running. Two jobs, not one: a mixed drop
+    /// runs both groups, and neither should wait for the other.
+    pub seal_job: Option<Running>,
+    /// The opening job, if one is running.
+    pub open_job: Option<Running>,
+}
+
+impl FilesState {
+    /// Fold a finished job's results into the queue and return its summary.
+    ///
+    /// After this the rows own their outcomes and the job can be dropped,
+    /// which is what lets "run again" know which rows are already settled.
+    pub fn absorb(&mut self, job: Running) -> String {
+        for done in &job.done {
+            if let Some(row) = self.queue.iter_mut().find(|q| q.path == done.input) {
+                row.outcome = Some(Ok(done.output.clone()));
+            }
+        }
+        for (input, why) in &job.failed {
+            if let Some(row) = self.queue.iter_mut().find(|q| &q.path == input) {
+                row.outcome = Some(Err(why.clone()));
+            }
+        }
+        job.summary()
+    }
+
+    /// A one-line caption for whichever job is mid-file, for the status strip.
+    #[must_use]
+    pub fn running_caption(&self) -> Option<String> {
+        let caption = |job: &Running, verb: &str| {
+            job.current.as_ref().map(|p| {
+                let name = p.file_name().map_or_else(
+                    || p.display().to_string(),
+                    |n| n.to_string_lossy().into_owned(),
+                );
+                format!("{verb} {name}")
+            })
+        };
+        self.seal_job
+            .as_ref()
+            .filter(|j| j.in_flight())
+            .and_then(|j| caption(j, "Sealing"))
+            .or_else(|| {
+                self.open_job
+                    .as_ref()
+                    .filter(|j| j.in_flight())
+                    .and_then(|j| caption(j, "Opening"))
+            })
+    }
+
+    /// Whether either group is mid-run.
+    #[must_use]
+    pub fn busy(&self) -> bool {
+        self.seal_job.as_ref().is_some_and(Running::in_flight)
+            || self.open_job.as_ref().is_some_and(Running::in_flight)
+    }
 }
 
 /// Transient state for the Identities panel.
@@ -223,12 +295,10 @@ const PREFS_KEY: &str = "agepony-prefs";
 
 /// The application.
 pub struct App {
-    /// Selected sidebar tab.
+    /// Selected rail destination.
     pub tab: Tab,
-    /// Encrypt panel state.
-    pub encrypt: EncryptState,
-    /// Decrypt panel state.
-    pub decrypt: DecryptState,
+    /// Files screen state.
+    pub files: FilesState,
     /// Identities panel state.
     pub identities: IdentitiesUi,
     /// Recipients panel state.
@@ -304,13 +374,10 @@ impl App {
 
         Self {
             tab: prefs.tab,
-            encrypt: EncryptState {
+            files: FilesState {
                 armor: prefs.armor,
-                ..EncryptState::default()
-            },
-            decrypt: DecryptState {
                 source: prefs.decrypt_source,
-                ..DecryptState::default()
+                ..FilesState::default()
             },
             identities: IdentitiesUi {
                 show_qr: prefs.show_qr,
@@ -346,10 +413,9 @@ impl App {
 impl App {
     /// Route files dropped onto the window.
     ///
-    /// Dropping while Encrypt or Decrypt is open honours that choice — the user
-    /// said where they wanted it by being there. From the other tabs there is
-    /// no such signal, so route on the extension and switch, which is almost
-    /// always what was meant.
+    /// Everything goes to Files, whichever screen is open, and each file is
+    /// grouped by reading its header rather than trusting its name. There is
+    /// no mode to be in first, which was the point of merging the two panels.
     fn handle_drops(&mut self, ctx: &egui::Context) {
         let dropped: Vec<PathBuf> = ctx.input(|i| {
             i.raw
@@ -362,36 +428,13 @@ impl App {
             return;
         }
 
-        let target = match self.tab {
-            Tab::Encrypt => Tab::Encrypt,
-            Tab::Decrypt => Tab::Decrypt,
-            _ => {
-                let looks_encrypted = dropped
-                    .iter()
-                    .all(|p| p.extension().is_some_and(|e| e.eq_ignore_ascii_case("age")));
-                let t = if looks_encrypted {
-                    Tab::Decrypt
-                } else {
-                    Tab::Encrypt
-                };
-                self.tab = t;
-                t
-            }
-        };
-
-        let count = dropped.len();
-        if target == Tab::Decrypt {
-            self.decrypt.inputs.extend(dropped);
-            self.decrypt.inputs.dedup();
-        } else {
-            self.encrypt.inputs.extend(dropped);
-            self.encrypt.inputs.dedup();
-        }
-        self.status = Some(format!(
-            "Added {count} file{} to {}",
-            if count == 1 { "" } else { "s" },
-            target.label()
-        ));
+        self.tab = Tab::Files;
+        let added = crate::panels::files::add_paths(self, dropped);
+        self.status = Some(match added {
+            0 => "Those files are already in the queue".to_owned(),
+            1 => "Added 1 file".to_owned(),
+            n => format!("Added {n} files"),
+        });
     }
 
     /// Keyboard shortcuts.
@@ -405,8 +448,7 @@ impl App {
             let key = match i {
                 0 => Key::Num1,
                 1 => Key::Num2,
-                2 => Key::Num3,
-                _ => Key::Num4,
+                _ => Key::Num3,
             };
             if ctx.input_mut(|inp| inp.consume_key(Modifiers::COMMAND, key)) {
                 self.tab = *tab;
@@ -417,12 +459,10 @@ impl App {
             self.choose_files();
         }
 
-        if ctx.input_mut(|i| i.consume_key(Modifiers::COMMAND, Key::Enter)) {
-            match self.tab {
-                Tab::Encrypt => crate::panels::encrypt::start(self, ctx.clone()),
-                Tab::Decrypt => crate::panels::decrypt::start(self, ctx.clone()),
-                _ => {}
-            }
+        if ctx.input_mut(|i| i.consume_key(Modifiers::COMMAND, Key::Enter))
+            && self.tab == Tab::Files
+        {
+            crate::panels::files::run_all(self, ctx.clone());
         }
 
         if ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Escape)) {
@@ -430,35 +470,30 @@ impl App {
         }
     }
 
-    fn choose_files(&mut self) {
-        match self.tab {
-            Tab::Encrypt => {
-                if let Some(files) = rfd::FileDialog::new().pick_files() {
-                    self.encrypt.inputs.extend(files);
-                    self.encrypt.inputs.dedup();
-                }
+    /// One dialog, no filters: the probe decides what each file is, so there
+    /// is no wrong dialog to have opened.
+    pub(crate) fn choose_files(&mut self) {
+        if let Some(files) = rfd::FileDialog::new().pick_files() {
+            self.tab = Tab::Files;
+            let added = crate::panels::files::add_paths(self, files);
+            if added > 0 {
+                self.status = None;
             }
-            Tab::Decrypt => {
-                if let Some(files) = rfd::FileDialog::new()
-                    .add_filter("age files", &["age", "txt"])
-                    .pick_files()
-                {
-                    self.decrypt.inputs.extend(files);
-                    self.decrypt.inputs.dedup();
-                }
-            }
-            _ => {}
         }
     }
 
     /// Escape: back out of whatever is open, innermost first.
     fn escape(&mut self) {
-        if let Some(job) = self.encrypt.job.as_ref().filter(|j| j.in_flight()) {
+        let mut cancelled = false;
+        for job in [self.files.seal_job.as_ref(), self.files.open_job.as_ref()]
+            .into_iter()
+            .flatten()
+            .filter(|j| j.in_flight())
+        {
             job.cancel();
-            return;
+            cancelled = true;
         }
-        if let Some(job) = self.decrypt.job.as_ref().filter(|j| j.in_flight()) {
-            job.cancel();
+        if cancelled {
             return;
         }
         if self.identities.pending_port.is_some() {
@@ -505,10 +540,7 @@ impl App {
         painter.text(
             egui::pos2(rect.center().x, shield.bottom() + 26.0),
             egui::Align2::CENTER_CENTER,
-            match self.tab {
-                Tab::Decrypt => "Drop to decrypt",
-                _ => "Drop to encrypt",
-            },
+            "Drop files here",
             crate::theme::semibold(22.0),
             egui::Color32::WHITE,
         );
@@ -522,8 +554,8 @@ impl eframe::App for App {
             PREFS_KEY,
             &Prefs {
                 tab: self.tab,
-                armor: self.encrypt.armor,
-                decrypt_source: self.decrypt.source,
+                armor: self.files.armor,
+                decrypt_source: self.files.source,
                 show_qr: self.identities.show_qr,
                 theme: self.theme,
             },
@@ -539,13 +571,28 @@ impl eframe::App for App {
         self.handle_shortcuts(ctx);
 
         // Drain worker updates before drawing, so this frame shows the newest
-        // progress rather than last frame's.
+        // progress rather than last frame's. A finished job's results are
+        // folded into the queue rows and the job dropped, so the rows carry
+        // their own answers and a later run knows which are already settled.
         let mut changed = false;
-        if let Some(job) = self.encrypt.job.as_mut() {
-            changed |= job.drain();
-        }
-        if let Some(job) = self.decrypt.job.as_mut() {
-            changed |= job.drain();
+        for which in [FileAction::Seal, FileAction::Open] {
+            let slot = match which {
+                FileAction::Seal => &mut self.files.seal_job,
+                FileAction::Open => &mut self.files.open_job,
+            };
+            if let Some(job) = slot.as_mut() {
+                changed |= job.drain();
+            }
+            if slot.as_ref().is_some_and(|j| j.finished) {
+                if let Some(job) = match which {
+                    FileAction::Seal => self.files.seal_job.take(),
+                    FileAction::Open => self.files.open_job.take(),
+                } {
+                    let summary = self.files.absorb(job);
+                    self.status = Some(summary);
+                    changed = true;
+                }
+            }
         }
         if changed {
             ctx.request_repaint();
@@ -634,21 +681,30 @@ impl eframe::App for App {
             });
 
         egui::Panel::bottom("status").show(ui, |ui| {
-            ui.horizontal(|ui| {
-                let message = self.status.clone().unwrap_or_default();
-                ui.label(message);
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if self.status.is_some() && ui.small_button("clear").clicked() {
-                        self.status = None;
-                    }
-                });
+            ui.add_space(6.0);
+            // The strip prefers live information over stale: what is running
+            // now, else the last status line, else a quiet "Ready". Escape
+            // clears the status; there is no button for it, because a footer
+            // full of controls stops reading as a footer.
+            let message = self
+                .files
+                .running_caption()
+                .or_else(|| self.status.clone())
+                .unwrap_or_else(|| "Ready".to_owned());
+            let detail = self.store.active().map_or_else(String::new, |e| {
+                if e.kind.is_post_quantum() {
+                    format!("{} · quantum-safe", e.label)
+                } else {
+                    e.label.clone()
+                }
             });
+            crate::theme::status_bar(ui, &message, &detail, false);
+            ui.add_space(6.0);
         });
 
         egui::CentralPanel::default().show(ui, |ui| {
             egui::ScrollArea::vertical().show(ui, |ui| match self.tab {
-                Tab::Encrypt => panels::encrypt::show(self, ui),
-                Tab::Decrypt => panels::decrypt::show(self, ui),
+                Tab::Files => panels::files::show(self, ui),
                 Tab::Identities => panels::identities::show(self, ui),
                 Tab::Recipients => panels::recipients::show(self, ui),
             });

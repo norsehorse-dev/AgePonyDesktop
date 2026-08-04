@@ -20,6 +20,37 @@ pub enum With<'a> {
     Passphrase(SecretString),
 }
 
+/// Whether the file at `path` starts like an age file, binary or armored.
+///
+/// This is the routing question the Files screen asks about every drop, and it
+/// is answered by reading the first bytes rather than by trusting the name. An
+/// extension is a claim; the header is a fact. A real age file someone renamed
+/// to `report.bak` still opens, and a text file someone called `notes.age` gets
+/// sealed rather than fed to the decryptor to fail with a parse error.
+///
+/// Reads at most 64 bytes. A file that cannot be opened or read answers
+/// `false`, which routes it to the seal group — where the encryptor will
+/// produce a real error message about the unreadable file, instead of this
+/// function inventing one of its own.
+#[must_use]
+pub fn looks_like_age_file(path: &Path) -> bool {
+    use std::io::Read;
+    let Ok(mut file) = File::open(path) else {
+        return false;
+    };
+    let mut head = [0_u8; 64];
+    let mut filled = 0;
+    // Loop rather than one read: a single read may legally return short.
+    while let Some(rest) = head.get_mut(filled..).filter(|r| !r.is_empty()) {
+        match file.read(rest) {
+            Ok(0) => break,
+            Ok(n) => filled += n,
+            Err(_) => return false,
+        }
+    }
+    crate::identity::looks_encrypted(head.get(..filled).unwrap_or_default())
+}
+
 /// Decrypt `input` to `output`.
 ///
 /// Accepts both binary and ASCII-armored input; the armor reader detects which.
@@ -133,6 +164,56 @@ pub fn default_output_path(input: &Path) -> std::path::PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_probe_believes_headers_and_not_names() {
+        let dir = std::env::temp_dir().join("agepony-probe-test");
+        let _ = fs::create_dir_all(&dir);
+
+        // A real binary age file wearing the wrong name entirely.
+        let renamed = dir.join("report.bak");
+        fs::write(
+            &renamed,
+            include_bytes!("../tests/fixtures/x25519_hello.age"),
+        )
+        .expect("write fixture");
+        assert!(
+            looks_like_age_file(&renamed),
+            "a renamed age file must probe true"
+        );
+
+        // An armored age file. The armor header is text, so this also proves
+        // the probe is not just matching the binary magic.
+        let armored = dir.join("armored.age");
+        fs::write(
+            &armored,
+            b"-----BEGIN AGE ENCRYPTED FILE-----\nYWdlLWVuY3J5cHRpb24ub3JnL3Yx\n",
+        )
+        .expect("write armored");
+        assert!(looks_like_age_file(&armored), "armored must probe true");
+
+        // The lie in the other direction: a text file named like an age file.
+        let impostor = dir.join("notes.age");
+        fs::write(&impostor, b"shopping: oats, apples, horseshoes\n").expect("write impostor");
+        assert!(
+            !looks_like_age_file(&impostor),
+            "a text file named .age must probe false"
+        );
+
+        // Shorter than the probe's buffer, and empty entirely.
+        let tiny = dir.join("tiny.age");
+        fs::write(&tiny, b"age").expect("write tiny");
+        assert!(!looks_like_age_file(&tiny));
+        let empty = dir.join("empty.age");
+        fs::write(&empty, b"").expect("write empty");
+        assert!(!looks_like_age_file(&empty));
+
+        // Missing files answer false rather than erroring: the seal path will
+        // produce the real complaint about an unreadable file.
+        assert!(!looks_like_age_file(&dir.join("no-such-file")));
+
+        let _ = fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn dot_age_is_stripped() {

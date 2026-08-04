@@ -83,8 +83,12 @@ codepoint is declared twice, and no text face accidentally covers an icon codepo
 2. **Rail.** — *done*
 3. `theme` components: `screen_head`, `status_bar`, `modal`, `queue_row`, `drop_zone`. — *done, 19
    tests green*
-4. `panels/files.rs`: merge encrypt and decrypt behind one destination, with the grouped queue.
-   `EncryptState` and `DecryptState` fold into one `FilesState`; the crypto calls do not change.
+4. `panels/files.rs`: merge encrypt and decrypt behind one destination, with the grouped queue. —
+   *done, 23 tests green.* `EncryptState` and `DecryptState` folded into `FilesState`; the crypto
+   calls did not change. Routing reads the file header (`agepony_core::decrypt::looks_like_age_file`)
+   rather than trusting the extension, results fold back into the queue rows when a job finishes so a
+   re-run only touches unsettled rows, and old persisted prefs survive the Tab merge via serde
+   aliases.
 5. `panels/settings.rs`: appearance, and whatever else has been living in corners.
 6. Migrate `identities.rs` and `recipients.rs` to the new components, and move rename, delete and
    import into modals.
@@ -107,10 +111,12 @@ Taken: mode control sits per group rather than once per screen; the drop zone st
 strip once files are queued, so adding a sixth file does not mean reaching for the button; the rail
 keeps its active-identity card at the foot; all three dialogs go modal.
 
-Open: whether `Files` should keep a manual override for a file the extension heuristic gets wrong —
-an `.age` file that was renamed, or a file that happens to end in `.age` and is not one. The header
-probe in `agepony-core` can answer this properly rather than guessing from the name, and probably
-should.
+Resolved in step 4: routing uses the header probe, so the rename cases the extension heuristic got
+wrong no longer exist. A manual per-row override ("treat this as...") is still possible later if
+anyone ever hits a file the probe misjudges, but nothing known produces one.
+
+Still open: whether the seal group's recipient list should become the mockup's chip row rather than
+the checkbox list, and whether a Done row should offer "reveal" more loudly than a click on the row.
 
 ## Verification
 

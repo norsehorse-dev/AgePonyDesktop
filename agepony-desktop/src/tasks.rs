@@ -78,14 +78,21 @@ pub enum Unlock {
 /// What the worker reports back.
 enum Update {
     Started(PathBuf),
+    /// Progress through the CURRENT file, 0..1. The worker does not know or
+    /// care about the batch; `Running::drain` turns this into an overall
+    /// fraction, and the per-row display uses it as it is.
     Progress(f32),
-    FileDone(PathBuf),
+    /// Input that finished, and where its output landed. Both ends, because
+    /// the queue keys rows by input and the reveal button wants the output.
+    FileDone(PathBuf, PathBuf),
     FileFailed(PathBuf, String),
     Finished,
 }
 
 /// One finished file.
 pub struct Outcome {
+    /// The input it came from. This is the key the queue looks rows up by.
+    pub input: PathBuf,
     /// Where the output landed.
     pub output: PathBuf,
 }
@@ -97,6 +104,8 @@ pub struct Running {
     total: usize,
     /// Overall fraction complete across the whole batch.
     pub progress: f32,
+    /// Fraction complete of the file in `current`, 0..1.
+    pub file_progress: f32,
     /// The file currently being worked on.
     pub current: Option<PathBuf>,
     /// Outputs written so far.
@@ -140,18 +149,24 @@ impl Running {
             match self.rx.try_recv() {
                 Ok(Update::Started(p)) => {
                     self.current = Some(p);
+                    self.file_progress = 0.0;
                     changed = true;
                 }
                 Ok(Update::Progress(f)) => {
-                    self.progress = f;
+                    self.file_progress = f;
+                    self.progress = overall(self.done.len() + self.failed.len(), f, self.total);
                     changed = true;
                 }
-                Ok(Update::FileDone(output)) => {
-                    self.done.push(Outcome { output });
+                Ok(Update::FileDone(input, output)) => {
+                    self.done.push(Outcome { input, output });
+                    self.file_progress = 0.0;
+                    self.progress = overall(self.done.len() + self.failed.len(), 0.0, self.total);
                     changed = true;
                 }
                 Ok(Update::FileFailed(input, why)) => {
                     self.failed.push((input, why));
+                    self.file_progress = 0.0;
+                    self.progress = overall(self.done.len() + self.failed.len(), 0.0, self.total);
                     changed = true;
                 }
                 Ok(Update::Finished) => {
@@ -215,7 +230,7 @@ pub fn spawn(job: Job, repaint: impl Fn() + Send + 'static) -> Running {
                 lock,
                 armor,
             } => {
-                for (i, input) in inputs.iter().enumerate() {
+                for input in &inputs {
                     if worker_cancel.load(Ordering::Relaxed) {
                         break;
                     }
@@ -230,7 +245,7 @@ pub fn spawn(job: Job, repaint: impl Fn() + Send + 'static) -> Running {
                         Lock::Passphrase(p) => To::Passphrase(p.clone()),
                     };
 
-                    let mut on_progress = batch_progress(&tx, &worker_cancel, i, total);
+                    let mut on_progress = file_progress(&tx, &worker_cancel);
                     let result = encrypt_file(input, &output, to, armor, &mut on_progress);
                     report(&send, input, &output, result);
                 }
@@ -268,7 +283,7 @@ pub fn spawn(job: Job, repaint: impl Fn() + Send + 'static) -> Running {
                     Unlock::Passphrase(_) => None,
                 };
 
-                for (i, input) in inputs.iter().enumerate() {
+                for input in &inputs {
                     if worker_cancel.load(Ordering::Relaxed) {
                         break;
                     }
@@ -281,7 +296,7 @@ pub fn spawn(job: Job, repaint: impl Fn() + Send + 'static) -> Running {
                         (None, Unlock::Identities { .. }) => unreachable!("handled above"),
                     };
 
-                    let mut on_progress = batch_progress(&tx, &worker_cancel, i, total);
+                    let mut on_progress = file_progress(&tx, &worker_cancel);
                     let result = decrypt_file(input, &output, with, &mut on_progress);
                     report(&send, input, &output, result);
                 }
@@ -296,6 +311,7 @@ pub fn spawn(job: Job, repaint: impl Fn() + Send + 'static) -> Running {
         cancel,
         total,
         progress: 0.0,
+        file_progress: 0.0,
         current: None,
         done: Vec::new(),
         failed: Vec::new(),
@@ -303,31 +319,35 @@ pub fn spawn(job: Job, repaint: impl Fn() + Send + 'static) -> Running {
     }
 }
 
-/// Map one file's 0..1 progress onto the whole batch, throttled to whole
-/// percents. A 4 GB file at 64 KiB a chunk is ~65k callbacks; sending each one
-/// would spend more time in the channel than in ChaCha20.
-fn batch_progress<'a>(
+/// The whole batch's fraction, from how many files are settled and how far the
+/// current one has got. Free-standing so it can be tested without a worker.
+#[must_use]
+pub fn overall(settled: usize, file_fraction: f32, total: usize) -> f32 {
+    if total == 0 {
+        return 1.0;
+    }
+    #[allow(clippy::cast_precision_loss)]
+    let raw = (settled as f32 + file_fraction.clamp(0.0, 1.0)) / total as f32;
+    raw.clamp(0.0, 1.0)
+}
+
+/// One file's 0..1 progress, throttled to whole percents. A 4 GB file at
+/// 64 KiB a chunk is ~65k callbacks; sending each one would spend more time in
+/// the channel than in ChaCha20.
+fn file_progress<'a>(
     tx: &'a std::sync::mpsc::Sender<Update>,
     cancel: &'a Arc<AtomicBool>,
-    index: usize,
-    total: usize,
 ) -> impl FnMut(f32) -> bool + 'a {
     let mut last_pct: i32 = -1;
     move |f: f32| {
         if cancel.load(Ordering::Relaxed) {
             return false;
         }
-        #[allow(clippy::cast_precision_loss)]
-        let overall = if total == 0 {
-            1.0
-        } else {
-            (index as f32 + f) / total as f32
-        };
         #[allow(clippy::cast_possible_truncation)]
-        let pct = (overall * 100.0) as i32;
+        let pct = (f * 100.0) as i32;
         if pct != last_pct {
             last_pct = pct;
-            return tx.send(Update::Progress(overall)).is_ok();
+            return tx.send(Update::Progress(f)).is_ok();
         }
         true
     }
@@ -340,7 +360,7 @@ fn report(
     result: agepony_core::Result<()>,
 ) {
     let _ = match result {
-        Ok(()) => send(Update::FileDone(output.to_path_buf())),
+        Ok(()) => send(Update::FileDone(input.to_path_buf(), output.to_path_buf())),
         Err(e) => send(Update::FileFailed(input.to_path_buf(), e.to_string())),
     };
 }
@@ -365,6 +385,17 @@ pub fn reveal(path: &Path) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn overall_progress_walks_the_batch_monotonically() {
+        // Empty batch is complete, not NaN: this is the 0/0 case again.
+        assert!((overall(0, 0.0, 0) - 1.0).abs() < f32::EPSILON);
+        // Second file of four, half done: 1.5/4.
+        assert!((overall(1, 0.5, 4) - 0.375).abs() < 1e-6);
+        // A rogue per-file fraction cannot push the batch past 1.
+        assert!(overall(3, 7.0, 4) <= 1.0);
+        assert!(overall(9, 0.0, 4) <= 1.0);
+    }
 
     #[test]
     fn the_summary_reads_naturally_at_every_count() {
