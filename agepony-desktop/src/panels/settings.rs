@@ -85,9 +85,135 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
             );
         });
         ui.add_space(theme::space::TIGHT);
+        ui.weak("Apache-2.0.");
+    });
+
+    // ---- the family ------------------------------------------------------
+    theme::card(ui, |ui| {
+        theme::section(ui, "More from NorseHorse");
+        ui.add_space(theme::space::SM);
+        for app_link in FAMILY {
+            family_row(ui, app_link);
+        }
+        ui.add_space(theme::space::SM);
+        ui.horizontal(|ui| {
+            ui.label(
+                egui::RichText::new("Every Pony app on one page:")
+                    .font(egui::FontId::proportional(12.5))
+                    .color(ui.visuals().weak_text_color()),
+            );
+            ui.hyperlink_to("pony.norsehor.se", "https://pony.norsehor.se");
+        });
+        ui.add_space(theme::space::TIGHT);
         ui.weak(
-            "Apache-2.0. The only two links in the app, and the app never follows \
-             either on its own: it has no network access at all.",
+            "Links open in your browser. The app itself never makes a network \
+             request — these are addresses, not connections.",
         );
     });
+}
+
+/// One sibling app: name, what it does, where it runs, where it lives, and the
+/// accent its own site uses.
+struct PonyApp {
+    name: &'static str,
+    tagline: &'static str,
+    platforms: &'static str,
+    url: &'static str,
+    accent: egui::Color32,
+}
+
+/// The rest of the family, ordered by how close each sits to what someone in a
+/// file-encryption app is already doing — the same principle PGPony Desktop's
+/// list uses. Names and platform strings are product names and OS names, left
+/// exactly as they are everywhere else; the accents are each app's own, lifted
+/// from the family band on agepony.com so the two lists agree.
+const FAMILY: &[PonyApp] = &[
+    PonyApp {
+        name: "PGPony",
+        tagline: "OpenPGP encryption for your messages and files.",
+        platforms: "iPhone · Android · macOS · Windows · Linux",
+        url: "https://pgpony.app",
+        accent: egui::Color32::from_rgb(0x5F, 0xFF, 0xAF),
+    },
+    PonyApp {
+        name: "QuorumPony",
+        tagline: "Split a secret into cards. Any few rebuild it. One alone reveals nothing.",
+        platforms: "iPhone",
+        url: "https://quorumpony.com",
+        accent: egui::Color32::from_rgb(0xC8, 0x97, 0x3A),
+    },
+    PonyApp {
+        name: "ScrubPony",
+        tagline: "Strips identifying metadata out of JPEGs without touching a pixel.",
+        platforms: "macOS · Linux",
+        url: "https://scrubpony.app",
+        accent: egui::Color32::from_rgb(0x9D, 0x7C, 0xF5),
+    },
+    PonyApp {
+        name: "RelayPony",
+        tagline: "Encrypted file transfer, phone to phone.",
+        platforms: "iPhone · Android · macOS · Windows · Linux",
+        url: "https://relaypony.app",
+        accent: egui::Color32::from_rgb(0x1F, 0x9C, 0xF0),
+    },
+    PonyApp {
+        name: "CarrierPony",
+        tagline: "Private messaging and file transfer, sealed end to end.",
+        platforms: "iPhone · Android",
+        url: "https://carrierpony.com",
+        accent: egui::Color32::from_rgb(0xF1, 0x66, 0x7B),
+    },
+    PonyApp {
+        name: "BurnPony",
+        tagline: "Send a secret. Encrypted on your phone, burned after reading.",
+        platforms: "iPhone",
+        url: "https://burnpony.app",
+        accent: egui::Color32::from_rgb(0xF6, 0x75, 0x29),
+    },
+];
+
+/// One row of the family list: the app's accent as a dot, its name as the
+/// link, where it runs, and one sentence on what it does.
+fn family_row(ui: &mut egui::Ui, app_link: &PonyApp) {
+    ui.horizontal(|ui| {
+        let (dot, _) = ui.allocate_exact_size(egui::Vec2::splat(9.0), egui::Sense::hover());
+        ui.painter()
+            .circle_filled(dot.center(), 4.0, app_link.accent);
+        ui.hyperlink_to(app_link.name, app_link.url);
+        ui.label(
+            egui::RichText::new(app_link.platforms)
+                .font(egui::FontId::new(10.5, egui::FontFamily::Monospace))
+                .color(ui.visuals().weak_text_color()),
+        );
+    });
+    ui.horizontal(|ui| {
+        ui.add_space(9.0 + theme::space::SM);
+        ui.weak(app_link.tagline);
+    });
+    ui.add_space(theme::space::SM);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_family_list_is_the_others_and_only_the_others() {
+        // AgePony linking to itself would be silly, a duplicate URL means a
+        // copy-paste slip, and every link must be https to a norsehorse site.
+        let mut seen = std::collections::HashSet::new();
+        for app_link in FAMILY {
+            assert!(
+                !app_link.url.contains("agepony.com"),
+                "the family list must not contain this app itself"
+            );
+            assert!(
+                app_link.url.starts_with("https://"),
+                "{} is not https",
+                app_link.name
+            );
+            assert!(seen.insert(app_link.url), "{} appears twice", app_link.name);
+        }
+        assert_eq!(FAMILY.len(), 6, "the family has six other members");
+    }
 }
