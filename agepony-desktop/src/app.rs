@@ -26,16 +26,19 @@ pub enum Tab {
     Identities,
     /// The recipient book.
     Recipients,
+    /// Appearance, storage, and what this build is.
+    Settings,
 }
 
 impl Tab {
-    pub(crate) const ALL: [Tab; 3] = [Tab::Files, Tab::Identities, Tab::Recipients];
+    pub(crate) const ALL: [Tab; 4] = [Tab::Files, Tab::Identities, Tab::Recipients, Tab::Settings];
 
     pub(crate) const fn label(self) -> &'static str {
         match self {
             Tab::Files => "Files",
             Tab::Identities => "Identities",
             Tab::Recipients => "Recipients",
+            Tab::Settings => "Settings",
         }
     }
 
@@ -45,6 +48,7 @@ impl Tab {
             Tab::Files => crate::theme::icon::FILES,
             Tab::Identities => crate::theme::icon::KEY_ROUND,
             Tab::Recipients => crate::theme::icon::USERS,
+            Tab::Settings => crate::theme::icon::SETTINGS,
         }
     }
 }
@@ -251,17 +255,7 @@ pub enum ThemeChoice {
 }
 
 impl ThemeChoice {
-    /// Every choice, in the order the Settings screen will offer them.
-    ///
-    /// Nothing in the running UI reads this today: the rail's interim control
-    /// cycles with [`Self::next`] because a three-way segmented control does
-    /// not fit 96pt. The real control lands with the Settings destination, and
-    /// the rail fit test reads this meanwhile, so it is checked rather than
-    /// merely kept.
-    #[cfg_attr(
-        not(test),
-        allow(dead_code, reason = "the Settings destination consumes this")
-    )]
+    /// Every choice, in the order the Settings screen offers them.
     pub(crate) const ALL: [ThemeChoice; 3] =
         [ThemeChoice::System, ThemeChoice::Light, ThemeChoice::Dark];
 
@@ -273,16 +267,7 @@ impl ThemeChoice {
         }
     }
 
-    /// The next choice in the cycle, for the rail's one-button control.
-    pub(crate) const fn next(self) -> Self {
-        match self {
-            ThemeChoice::System => ThemeChoice::Light,
-            ThemeChoice::Light => ThemeChoice::Dark,
-            ThemeChoice::Dark => ThemeChoice::System,
-        }
-    }
-
-    fn apply(self, ctx: &egui::Context) {
+    pub(crate) fn apply(self, ctx: &egui::Context) {
         ctx.set_theme(match self {
             ThemeChoice::System => egui::ThemePreference::System,
             ThemeChoice::Light => egui::ThemePreference::Light,
@@ -448,7 +433,8 @@ impl App {
             let key = match i {
                 0 => Key::Num1,
                 1 => Key::Num2,
-                _ => Key::Num3,
+                2 => Key::Num3,
+                _ => Key::Num4,
             };
             if ctx.input_mut(|inp| inp.consume_key(Modifiers::COMMAND, key)) {
                 self.tab = *tab;
@@ -657,27 +643,10 @@ impl eframe::App for App {
                 // Pinned to the foot of the sidebar. The bottom margin is not
                 // decoration: without it the row sits flush against the window
                 // edge and reads as clipped.
-                // One cycling button, not a three-way segmented control.
-                // `segmented` divides the available width evenly, and three
-                // segments of a 96px interior leaves 32px each, which clips
-                // "Light" and "Dark". This is temporary: appearance belongs on
-                // the Settings destination, where there is room for the real
-                // control, and it moves there when that screen lands.
-                ui.with_layout(egui::Layout::bottom_up(egui::Align::LEFT), |ui| {
-                    ui.add_space(crate::theme::space::MD);
-                    let next = self.theme.next();
-                    if crate::theme::secondary_button(ui, self.theme.label())
-                        .on_hover_text(format!("Appearance. Click for {}.", next.label()))
-                        .clicked()
-                    {
-                        self.theme = next;
-                        next.apply(ui.ctx());
-                    }
-                    ui.add_space(crate::theme::space::TIGHT);
-                    crate::theme::section(ui, "Appearance");
-                    ui.add_space(crate::theme::space::SM);
-                    ui.separator();
-                });
+                // Appearance lives on the Settings destination now. The rail
+                // held a stopgap cycling button while there was nowhere else
+                // for it; a control that changes the whole window's look is a
+                // setting, and the rail is for going places.
             });
 
         egui::Panel::bottom("status").show(ui, |ui| {
@@ -707,6 +676,7 @@ impl eframe::App for App {
                 Tab::Files => panels::files::show(self, ui),
                 Tab::Identities => panels::identities::show(self, ui),
                 Tab::Recipients => panels::recipients::show(self, ui),
+                Tab::Settings => panels::settings::show(self, ui),
             });
         });
     }

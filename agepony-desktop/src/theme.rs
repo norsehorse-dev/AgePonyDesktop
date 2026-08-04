@@ -1678,17 +1678,9 @@ mod tests {
             );
         }
 
-        // The appearance button, label plus egui's button padding.
-        let padding = 24.0;
-        for choice in crate::app::ThemeChoice::ALL {
-            let w = text_width(&regular, choice.label(), 14.0) + padding;
-            assert!(
-                w <= RAIL_INNER,
-                "the appearance button reads {:?} at {w:.1}pt and the rail's interior is \
-                 {RAIL_INNER}pt",
-                choice.label()
-            );
-        }
+        // The appearance control used to be pinned here too; it moved to the
+        // Settings screen, where width is not scarce, so the rail's fit
+        // obligations are now the masthead and the destination labels alone.
     }
 
     #[test]

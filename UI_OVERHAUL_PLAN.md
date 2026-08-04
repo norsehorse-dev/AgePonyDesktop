@@ -89,7 +89,11 @@ codepoint is declared twice, and no text face accidentally covers an icon codepo
    rather than trusting the extension, results fold back into the queue rows when a job finishes so a
    re-run only touches unsettled rows, and old persisted prefs survive the Tab merge via serde
    aliases.
-5. `panels/settings.rs`: appearance, and whatever else has been living in corners.
+5. `panels/settings.rs`: appearance, and whatever else has been living in corners. — *done.*
+   Appearance (the real three-way control, off the rail at last), the storage location with a
+   reveal button and a back-this-up note, and an About card with the version and the app's only
+   two links. The scrypt work-factor control Android has, and an "always encrypt to self" toggle,
+   are the obvious next tenants when they are wanted.
 6. Migrate `identities.rs` and `recipients.rs` to the new components, and move rename, delete and
    import into modals.
 7. Delete the dead vocabulary from `theme.rs` once nothing calls it.
