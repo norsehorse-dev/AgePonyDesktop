@@ -27,6 +27,17 @@ getrandom = "0.4.3"
 base64 = "0.23.0"
 ml-kem = { version = "0.2", features = ["deterministic", "zeroize"] }
 shake = "0.1.0"
+# SSHSIG signing/verification and OpenSSH key parsing (incl. encrypted keys),
+# for the Sign feature. SSHSIG is a standardised format, so ed25519/rsa output
+# matches the mobile apps and ssh-keygen byte for byte (proven by fixtures).
+# `encryption` pulls aes/ctr/cbc/bcrypt-pbkdf — none networking (no_network.rs
+# guards that).
+ssh-key = { version = "0.6", default-features = false, features = ["ed25519", "rsa", "p256", "encryption", "std"] }
+# Direct RSA signing, to work around an ssh-key 0.6.7 bug that makes its own
+# RSA SSHSIG signer error (it rebuilds the key with p twice instead of p,q).
+# Pinned to the same sha2 (0.10) rsa 0.9 uses, so the pkcs1v15 digest lines up.
+rsa = "0.9"
+sha2_rsa = { package = "sha2", version = "0.10", features = ["oid"] }
 
 [dev-dependencies]
 age-core.workspace = true

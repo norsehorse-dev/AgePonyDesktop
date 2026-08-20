@@ -74,6 +74,19 @@ pub enum CoreError {
     /// Reached code that Phase 4 has to fill in.
     #[error("{0} is not implemented yet")]
     NotImplemented(&'static str),
+
+    /// A key was offered for signing that cannot sign (an age X25519 or
+    /// post-quantum identity, or an unsupported SSH algorithm).
+    #[error("this key cannot sign: {0}")]
+    UnsupportedSigningKey(String),
+
+    /// Signing or verification failed inside the SSH layer.
+    #[error("signing failed: {0}")]
+    Signing(String),
+
+    /// A signature blob was not a well-formed SSHSIG.
+    #[error("not a valid SSH signature")]
+    InvalidSignature,
 }
 
 /// Convenience alias.

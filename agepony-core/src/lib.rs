@@ -40,6 +40,7 @@ pub mod passphrase;
 pub mod porting;
 pub mod pq;
 pub mod recipient;
+pub mod signing;
 pub mod store;
 pub mod vault;
 
