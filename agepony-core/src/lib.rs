@@ -30,6 +30,7 @@
     )
 )]
 
+pub mod archive;
 pub mod book;
 pub mod clock;
 pub mod decrypt;
