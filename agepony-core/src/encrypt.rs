@@ -166,6 +166,57 @@ pub fn encrypt_file(
     guard.commit()
 }
 
+/// Encrypt `plaintext` held in memory straight to `output`, streaming the
+/// ciphertext to disk.
+///
+/// This is what multi-file bundling uses: the tar is built in memory (a set of
+/// files chosen together is modest), and its ciphertext streams to the output
+/// with the same sibling-dotfile-and-rename discipline as [`encrypt_file`], so
+/// the plaintext tar never touches the filesystem.
+///
+/// # Errors
+///
+/// [`CoreError::NoRecipients`], [`CoreError::MixedPostQuantum`],
+/// [`CoreError::Cancelled`], [`CoreError::Io`], or an [`age::EncryptError`].
+pub fn encrypt_bytes_to_file(
+    plaintext: &[u8],
+    output: &Path,
+    to: To<'_>,
+    armor: bool,
+    on_progress: ProgressFn<'_>,
+) -> Result<()> {
+    let encryptor = match to {
+        To::Recipients(rs) => {
+            if rs.is_empty() {
+                return Err(CoreError::NoRecipients);
+            }
+            let pq = rs.iter().filter(|r| r.kind.is_post_quantum()).count();
+            if pq != 0 && pq != rs.len() {
+                return Err(CoreError::MixedPostQuantum);
+            }
+            age::Encryptor::with_recipients(rs.iter().map(|r| r.recipient.as_ref() as _))?
+        }
+        To::Passphrase(p) => crate::passphrase::encryptor(p)?,
+    };
+
+    let total = plaintext.len() as u64;
+    let mut reader = plaintext;
+    let (guard, sink) = TempOut::create(output)?;
+
+    if armor {
+        let armored = ArmoredWriter::wrap_output(sink, Format::AsciiArmor)?;
+        let armored = pump(encryptor, armored, &mut reader, total, on_progress)?;
+        let mut sink = armored.finish()?;
+        sink.flush()?;
+        sink.sync_all().map_err(io_at(output))?;
+    } else {
+        let mut sink = pump(encryptor, sink, &mut reader, total, on_progress)?;
+        sink.flush()?;
+        sink.sync_all().map_err(io_at(output))?;
+    }
+    guard.commit()
+}
+
 /// Encrypt `plaintext` held in memory and return the ciphertext.
 ///
 /// This is the Text screen's counterpart to [`encrypt_file`]: a pasted note is

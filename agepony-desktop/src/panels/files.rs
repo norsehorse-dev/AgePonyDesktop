@@ -15,7 +15,7 @@
 use crate::app::{App, DecryptSource, FileAction, QueuedFile};
 use crate::{tasks, theme};
 use age::secrecy::SecretString;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// Add files to the queue, grouping each by its header. Returns how many were
 /// new; a path already queued is left alone rather than duplicated.
@@ -193,14 +193,27 @@ fn run_seal(app: &mut App, ctx: &egui::Context) {
         move || ctx.request_repaint()
     };
     app.status = None;
-    app.files.seal_job = Some(tasks::spawn(
+
+    // Bundling only applies to more than one file; with one it is a plain seal.
+    let job = if app.files.bundle && inputs.len() > 1 {
+        let dir = inputs
+            .first()
+            .and_then(|p| p.parent())
+            .map_or_else(|| std::path::PathBuf::from("."), Path::to_path_buf);
+        tasks::Job::EncryptBundle {
+            inputs,
+            lock,
+            armor: app.files.armor,
+            output: dir.join("bundle.tar.age"),
+        }
+    } else {
         tasks::Job::Encrypt {
             inputs,
             lock,
             armor: app.files.armor,
-        },
-        repaint,
-    ));
+        }
+    };
+    app.files.seal_job = Some(tasks::spawn(job, repaint));
 }
 
 fn run_open(app: &mut App, ctx: &egui::Context) {
@@ -305,6 +318,12 @@ fn seal_options(app: &mut App, ui: &mut egui::Ui) {
             });
             ui.add_space(theme::space::LG);
             ui.checkbox(&mut app.files.armor, "ASCII armor");
+            // Bundling only means something for more than one file.
+            if count(app, FileAction::Seal) > 1 {
+                ui.add_space(theme::space::LG);
+                ui.checkbox(&mut app.files.bundle, "Bundle into one archive")
+                    .on_hover_text("Pack all the files into a single .tar.age");
+            }
         });
         ui.add_space(theme::space::SM);
 

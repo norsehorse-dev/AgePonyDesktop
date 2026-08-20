@@ -125,6 +125,8 @@ pub struct FilesState {
     pub passphrase: String,
     /// ASCII armor the output.
     pub armor: bool,
+    /// Bundle several seal files into one `.tar.age` instead of one each.
+    pub bundle: bool,
 
     // ---- opening --------------------------------------------------------
     /// Where the identity comes from.

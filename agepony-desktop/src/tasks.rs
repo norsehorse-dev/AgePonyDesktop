@@ -23,8 +23,9 @@
 //! the third was unreadable would be the wrong trade.
 
 use age::secrecy::SecretString;
+use agepony_core::archive::tar;
 use agepony_core::decrypt::{With, decrypt_file};
-use agepony_core::encrypt::{To, encrypt_file, unique_path};
+use agepony_core::encrypt::{To, encrypt_bytes_to_file, encrypt_file, unique_path};
 use agepony_core::recipient::Parsed;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -49,6 +50,18 @@ pub enum Job {
         lock: Lock,
         /// ASCII armor the output.
         armor: bool,
+    },
+    /// Bundle every file in `inputs` into one compact-USTAR archive and encrypt
+    /// that to a single `.tar.age`, so a set of files travels as one file.
+    EncryptBundle {
+        /// Source files, in archive order.
+        inputs: Vec<PathBuf>,
+        /// Recipients or a passphrase.
+        lock: Lock,
+        /// ASCII armor the output.
+        armor: bool,
+        /// The `.tar.age` to write.
+        output: PathBuf,
     },
     /// Decrypt every file in `inputs`.
     Decrypt {
@@ -214,7 +227,9 @@ pub fn spawn(job: Job, repaint: impl Fn() + Send + 'static) -> Running {
     let worker_cancel = Arc::clone(&cancel);
 
     let total = match &job {
-        Job::Encrypt { inputs, .. } | Job::Decrypt { inputs, .. } => inputs.len(),
+        Job::Encrypt { inputs, .. }
+        | Job::Decrypt { inputs, .. }
+        | Job::EncryptBundle { inputs, .. } => inputs.len(),
     };
 
     std::thread::spawn(move || {
@@ -248,6 +263,64 @@ pub fn spawn(job: Job, repaint: impl Fn() + Send + 'static) -> Running {
                     let mut on_progress = file_progress(&tx, &worker_cancel);
                     let result = encrypt_file(input, &output, to, armor, &mut on_progress);
                     report(&send, input, &output, result);
+                }
+            }
+            Job::EncryptBundle {
+                inputs,
+                lock,
+                armor,
+                output,
+            } => {
+                let _ = send(Update::Started(output.clone()));
+
+                // Build the tar in memory. A set chosen to travel together is
+                // modest; the ciphertext still streams to disk.
+                let mut entries: Vec<tar::Entry> = Vec::new();
+                let mut used: std::collections::HashSet<String> = std::collections::HashSet::new();
+                let mut read_error = None;
+                for input in &inputs {
+                    match std::fs::read(input) {
+                        Ok(data) => entries.push(tar::Entry {
+                            name: unique_entry_name(input, &mut used),
+                            data,
+                        }),
+                        Err(e) => {
+                            read_error = Some(format!("could not read {}: {e}", input.display()));
+                            break;
+                        }
+                    }
+                }
+
+                let result = if let Some(why) = read_error {
+                    Err(why)
+                } else {
+                    tar::create(&entries)
+                        .map_err(|e| e.to_string())
+                        .and_then(|tarball| {
+                            let out = unique_path(&output);
+                            let to = match &lock {
+                                Lock::Recipients(r) => To::Recipients(r),
+                                Lock::Passphrase(p) => To::Passphrase(p.clone()),
+                            };
+                            let mut on_progress = file_progress(&tx, &worker_cancel);
+                            encrypt_bytes_to_file(&tarball, &out, to, armor, &mut on_progress)
+                                .map(|()| out)
+                                .map_err(|e| e.to_string())
+                        })
+                };
+
+                // Resolve every contributing row to the one bundle output.
+                match result {
+                    Ok(out) => {
+                        for input in &inputs {
+                            let _ = send(Update::FileDone(input.clone(), out.clone()));
+                        }
+                    }
+                    Err(why) => {
+                        for input in &inputs {
+                            let _ = send(Update::FileFailed(input.clone(), why.clone()));
+                        }
+                    }
                 }
             }
             Job::Decrypt { inputs, unlock } => {
@@ -351,6 +424,29 @@ fn file_progress<'a>(
         }
         true
     }
+}
+
+/// The tar entry name for `input`: its file name, made unique within the archive
+/// by inserting ` (2)` before the extension if the name is already taken, so two
+/// files that share a basename do not clobber each other on extraction.
+fn unique_entry_name(input: &Path, used: &mut std::collections::HashSet<String>) -> String {
+    let base = input
+        .file_name()
+        .map_or_else(|| "file".to_owned(), |n| n.to_string_lossy().into_owned());
+    if used.insert(base.clone()) {
+        return base;
+    }
+    let (stem, ext) = match base.find('.') {
+        Some(i) if i > 0 => (&base[..i], &base[i..]),
+        _ => (base.as_str(), ""),
+    };
+    for n in 2..10_000 {
+        let candidate = format!("{stem} ({n}){ext}");
+        if used.insert(candidate.clone()) {
+            return candidate;
+        }
+    }
+    base
 }
 
 fn report(
