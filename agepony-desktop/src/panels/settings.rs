@@ -341,6 +341,22 @@ const FAMILY: &[PonyApp] = &[
         accent: egui::Color32::from_rgb(0x5F, 0xFF, 0xAF),
     },
     PonyApp {
+        name: "PassPony",
+        tagline: "Your pass and passage store, in your pocket.",
+        platforms: "iPhone · macOS · Windows · Linux",
+        url: "https://passpony.app",
+        // Best-fit accent; swap for PassPony's own if the family band differs.
+        accent: egui::Color32::from_rgb(0xE8, 0xC8, 0x4D),
+    },
+    PonyApp {
+        name: "VaultPony",
+        tagline: "VeraCrypt-compatible encrypted vaults, entirely on your device.",
+        platforms: "Android",
+        url: "https://vaultpony.app",
+        // Best-fit accent; swap for VaultPony's own if the family band differs.
+        accent: egui::Color32::from_rgb(0xD9, 0x53, 0x4F),
+    },
+    PonyApp {
         name: "QuorumPony",
         tagline: "Split a secret into cards. Any few rebuild it. One alone reveals nothing.",
         platforms: "iPhone",
@@ -419,6 +435,6 @@ mod tests {
             );
             assert!(seen.insert(app_link.url), "{} appears twice", app_link.name);
         }
-        assert_eq!(FAMILY.len(), 6, "the family has six other members");
+        assert_eq!(FAMILY.len(), 8, "the family has eight other members");
     }
 }
