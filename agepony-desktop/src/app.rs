@@ -24,6 +24,8 @@ pub enum Tab {
     Files,
     /// Encrypting and decrypting pasted text, not files.
     Text,
+    /// Signing and verifying files, and managing signing keys and signers.
+    Sign,
     /// Identity management.
     Identities,
     /// The recipient book.
@@ -33,9 +35,10 @@ pub enum Tab {
 }
 
 impl Tab {
-    pub(crate) const ALL: [Tab; 5] = [
+    pub(crate) const ALL: [Tab; 6] = [
         Tab::Files,
         Tab::Text,
+        Tab::Sign,
         Tab::Identities,
         Tab::Recipients,
         Tab::Settings,
@@ -45,6 +48,7 @@ impl Tab {
         match self {
             Tab::Files => "Files",
             Tab::Text => "Text",
+            Tab::Sign => "Sign",
             Tab::Identities => "Identities",
             Tab::Recipients => "Recipients",
             Tab::Settings => "Settings",
@@ -55,9 +59,11 @@ impl Tab {
     pub(crate) const fn icon(self) -> char {
         match self {
             Tab::Files => crate::theme::icon::FILES,
-            // Reuses the compose glyph; the icon face is subset to the declared
-            // set, so a distinct Text/Sign glyph needs the font re-subset first.
+            // Reuses declared glyphs (compose, confirm): the icon face is subset
+            // to the declared set, so distinct Text/Sign glyphs need the font
+            // re-subset first.
             Tab::Text => crate::theme::icon::PENCIL,
+            Tab::Sign => crate::theme::icon::CIRCLE_CHECK,
             Tab::Identities => crate::theme::icon::KEY_ROUND,
             Tab::Recipients => crate::theme::icon::USERS,
             Tab::Settings => crate::theme::icon::SETTINGS,
@@ -269,6 +275,80 @@ impl TextState {
     }
 }
 
+/// Which Sign sub-screen is showing.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub enum SignMode {
+    /// Sign a file with a stored signing key.
+    #[default]
+    Sign,
+    /// Verify a file against a detached signature.
+    Verify,
+    /// Manage signing keys and trusted signers.
+    Keys,
+}
+
+/// How much a verified signature is trusted.
+#[derive(Debug, Clone)]
+pub enum Trust {
+    /// The signer is known: the matched name.
+    Known(String),
+    /// Cryptographically valid, but the signer is not in any store. Carries the
+    /// signer's wire blob so it can be trusted with one click.
+    ValidUnknown(Vec<u8>),
+    /// The signature did not verify: why.
+    Invalid(String),
+}
+
+/// The outcome of the last verify, held for display.
+#[derive(Debug, Clone)]
+pub struct VerifyOutcome {
+    /// The trust decision.
+    pub trust: Trust,
+    /// The signer key type.
+    pub key_type: String,
+    /// The signer's fingerprint, when the signature was structurally valid.
+    pub fingerprint: Option<String>,
+}
+
+/// Everything the Sign screen remembers between frames.
+#[derive(Default)]
+pub struct SignState {
+    /// Which sub-screen.
+    pub mode: SignMode,
+
+    // ---- sign -----------------------------------------------------------
+    /// The chosen signing key's id.
+    pub sign_key_id: Option<String>,
+    /// Files to sign.
+    pub sign_files: Vec<PathBuf>,
+    /// Passphrase for a protected signing key.
+    pub sign_passphrase: String,
+
+    // ---- verify ---------------------------------------------------------
+    /// The file being verified.
+    pub verify_file: Option<PathBuf>,
+    /// Its detached signature file.
+    pub verify_sig: Option<PathBuf>,
+    /// The last verdict.
+    pub verify_result: Option<VerifyOutcome>,
+    /// The name typed to trust an unknown-but-valid signer.
+    pub trust_name: String,
+
+    // ---- keys / signers forms ------------------------------------------
+    /// Label for a signing key being imported.
+    pub new_key_label: String,
+    /// Passphrase unlocking the source OpenSSH key on import.
+    pub import_key_passphrase: String,
+    /// Passphrase to protect the imported key in the store.
+    pub protect_passphrase: String,
+    /// Protect the imported key with a passphrase.
+    pub protect_key: bool,
+    /// Name for a trusted signer being pasted.
+    pub new_signer_name: String,
+    /// The SSH public-key line for a trusted signer being pasted.
+    pub new_signer_line: String,
+}
+
 /// Transient state for the Identities panel.
 #[derive(Default)]
 pub struct IdentitiesUi {
@@ -382,8 +462,16 @@ pub struct App {
     pub identities: IdentitiesUi,
     /// Recipients panel state.
     pub recipients: RecipientsUi,
+    /// Sign screen state.
+    pub sign: SignState,
     /// The identity store.
     pub store: Store,
+    /// The signing-key store (OpenSSH keys AgePony can sign with).
+    pub signing_store: agepony_core::signing::store::SigningStore,
+    /// The trusted-signers list.
+    pub signers: agepony_core::signing::signers::Signers,
+    /// Where the trusted-signers list is stored.
+    pub signers_path: PathBuf,
     /// The recipient book.
     pub book: Book,
     /// Where the book is stored.
@@ -409,12 +497,24 @@ impl App {
             .unwrap_or_default();
         let config_dir = config_dir();
         let book_path = config_dir.join("recipients.json");
+        let signers_path = config_dir.join("signers.json");
 
         let mut status = None;
         let book = Book::load(&book_path).unwrap_or_else(|e| {
             status = Some(format!("Could not load the recipient book: {e}"));
             Book::default()
         });
+        let signing_store =
+            agepony_core::signing::store::SigningStore::open(&config_dir).unwrap_or_else(|e| {
+                status = Some(format!("Could not open the signing-key store: {e}"));
+                agepony_core::signing::store::SigningStore::open(std::path::Path::new("."))
+                    .unwrap_or_else(|_| unreachable!())
+            });
+        let signers = agepony_core::signing::signers::Signers::load(&signers_path).unwrap_or_else(|e| {
+            status = Some(format!("Could not load the trusted-signers list: {e}"));
+            agepony_core::signing::signers::Signers::default()
+        });
+
         let store = Store::open(&config_dir).unwrap_or_else(|e| {
             status = Some(format!("Could not open the identity store: {e}"));
             // An unreadable index must not take the whole app down, but it also
@@ -464,7 +564,11 @@ impl App {
                 ..IdentitiesUi::default()
             },
             recipients: RecipientsUi::default(),
+            sign: SignState::default(),
             store,
+            signing_store,
+            signers,
+            signers_path,
             book,
             book_path,
             config_dir,
@@ -478,6 +582,13 @@ impl App {
     pub fn save_book(&mut self) {
         if let Err(e) = self.book.save(&self.book_path) {
             self.status = Some(format!("Could not save the recipient book: {e}"));
+        }
+    }
+
+    /// Save the trusted-signers list, reporting failure in the status bar.
+    pub fn save_signers(&mut self) {
+        if let Err(e) = self.signers.save(&self.signers_path) {
+            self.status = Some(format!("Could not save the trusted-signers list: {e}"));
         }
     }
 
@@ -795,6 +906,7 @@ impl eframe::App for App {
             egui::ScrollArea::vertical().show(ui, |ui| match self.tab {
                 Tab::Files => panels::files::show(self, ui),
                 Tab::Text => panels::text::show(self, ui),
+                Tab::Sign => panels::sign::show(self, ui),
                 Tab::Identities => panels::identities::show(self, ui),
                 Tab::Recipients => panels::recipients::show(self, ui),
                 Tab::Settings => panels::settings::show(self, ui),

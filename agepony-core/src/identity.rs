@@ -133,6 +133,37 @@ fn decrypt_identity_bytes(bytes: &[u8], passphrase: &SecretString) -> Result<Zer
     Ok(out)
 }
 
+/// Read a text file that may be age passphrase-encrypted, returning its plain
+/// text in a [`Zeroizing`] buffer.
+///
+/// Unlike [`load_file_maybe_encrypted`], this does not parse the contents as age
+/// identities: it is for arbitrary secret text, such as an OpenSSH signing key
+/// held by the signing-key store.
+///
+/// # Errors
+///
+/// [`CoreError::PassphraseRequired`] if the file is encrypted and no passphrase
+/// was given, [`CoreError::Decrypt`] for a wrong passphrase, or
+/// [`CoreError::Io`].
+pub fn load_text_maybe_encrypted(
+    path: &Path,
+    passphrase: Option<&SecretString>,
+) -> Result<Zeroizing<String>> {
+    let bytes = fs::read(path).map_err(io_at(path))?;
+    if !looks_encrypted(&bytes) {
+        return Ok(Zeroizing::new(
+            String::from_utf8(bytes).map_err(|_| CoreError::InvalidIdentity)?,
+        ));
+    }
+    let pass = passphrase.ok_or(CoreError::PassphraseRequired)?;
+    let plaintext = decrypt_identity_bytes(&bytes, pass)?;
+    Ok(Zeroizing::new(
+        std::str::from_utf8(&plaintext)
+            .map_err(|_| CoreError::InvalidIdentity)?
+            .to_owned(),
+    ))
+}
+
 /// Write an identity file, encrypted to a passphrase.
 ///
 /// Uses age's own passphrase encryption, so the result is an ordinary age file

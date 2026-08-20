@@ -19,14 +19,14 @@ const RSA_KEY: &str = include_str!("fixtures/sshsig_rsa_key");
 const RSA_PUB: &str = include_str!("fixtures/sshsig_rsa_key.pub");
 
 fn have_ssh_keygen() -> bool {
+    // Presence, not exit code: ssh-keygen with no real work exits non-zero, but
+    // the process spawning at all means it is installed.
+    // No args: ssh-keygen prints usage and exits non-zero, with no side effects.
     Command::new("ssh-keygen")
-        .arg("-Q")
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .status()
-        .map(|s| s.success() || true) // presence, not exit code
-        .unwrap_or(false)
-        && Command::new("ssh-keygen").arg("-h").output().is_ok()
+        .is_ok()
 }
 
 /// `ssh-keygen -Y verify` accepts our signature against an allowed_signers file

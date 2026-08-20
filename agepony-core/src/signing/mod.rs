@@ -30,6 +30,8 @@ use ssh_key::public::KeyData;
 use ssh_key::{Algorithm, HashAlg, LineEnding, PrivateKey, PublicKey, Signature, SshSig};
 
 pub mod allowed_signers;
+pub mod signers;
+pub mod store;
 
 /// The SSHSIG namespace AgePony signs and verifies under.
 pub const NAMESPACE: &str = "agepony";
