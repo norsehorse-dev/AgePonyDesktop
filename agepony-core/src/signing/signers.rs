@@ -210,6 +210,11 @@ impl Signers {
         super::allowed_signers::serialize(&entries)
     }
 
+    /// Remove every trusted signer — part of the panic wipe.
+    pub fn clear(&mut self) {
+        self.signers.clear();
+    }
+
     /// Remove a signer by id. Returns whether one was removed.
     pub fn remove(&mut self, id: &str) -> bool {
         let before = self.signers.len();

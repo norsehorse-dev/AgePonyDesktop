@@ -351,6 +351,21 @@ pub struct SignState {
     pub new_signer_line: String,
 }
 
+/// State for the "upgrade to quantum-safe" migration on the Settings screen.
+#[derive(Default)]
+pub struct MigrateState {
+    /// The chosen post-quantum target identity id.
+    pub target_id: Option<String>,
+    /// The `.age` files to migrate.
+    pub files: Vec<PathBuf>,
+    /// The destination folder for the re-encrypted copies.
+    pub dest: Option<PathBuf>,
+    /// A shared passphrase for any passphrase-encrypted inputs.
+    pub passphrase: String,
+    /// The running batch, if one is in flight or just finished.
+    pub job: Option<Running>,
+}
+
 /// Transient state for the Identities panel.
 #[derive(Default)]
 pub struct IdentitiesUi {
@@ -466,6 +481,8 @@ pub struct App {
     pub recipients: RecipientsUi,
     /// Sign screen state.
     pub sign: SignState,
+    /// Migration (upgrade-to-quantum-safe) state.
+    pub migrate: MigrateState,
     /// The identity store.
     pub store: Store,
     /// The signing-key store (OpenSSH keys AgePony can sign with).
@@ -482,6 +499,8 @@ pub struct App {
     pub config_dir: PathBuf,
     /// A message to show at the bottom of the window.
     pub status: Option<String>,
+    /// The confirmation text typed into the panic-wipe box on Settings.
+    pub wipe_confirm: String,
     /// Light, dark or follow the OS.
     pub theme: ThemeChoice,
     /// Set once the theme has been pushed into egui, so it is applied on the
@@ -567,6 +586,7 @@ impl App {
             },
             recipients: RecipientsUi::default(),
             sign: SignState::default(),
+            migrate: MigrateState::default(),
             store,
             signing_store,
             signers,
@@ -575,6 +595,7 @@ impl App {
             book_path,
             config_dir,
             status,
+            wipe_confirm: String::new(),
             theme: prefs.theme,
             theme_applied: false,
         }
@@ -813,6 +834,19 @@ impl eframe::App for App {
                 }
             }
         }
+        // The migration batch drains on its own; its results are read live from
+        // the job in the Settings section, and the summary lands in the status
+        // bar when it finishes.
+        if let Some(job) = self.migrate.job.as_mut() {
+            if job.drain() {
+                changed = true;
+            }
+            if job.finished {
+                let summary = job.summary();
+                self.status = Some(format!("Migration: {summary}"));
+            }
+        }
+
         if changed {
             ctx.request_repaint();
         }

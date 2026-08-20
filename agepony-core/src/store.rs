@@ -390,6 +390,28 @@ impl Store {
         crate::identity::load_file_maybe_encrypted(&self.path_for(entry), passphrase)
     }
 
+    /// Delete every identity and its key material — the panic wipe.
+    ///
+    /// Removes each identity's `0600` key file and empties the index. This is
+    /// deliberate and irreversible; the UI gates it behind a typed confirmation.
+    ///
+    /// # Errors
+    ///
+    /// [`CoreError::Io`] if the emptied index cannot be written. Key files that
+    /// fail to delete are skipped rather than aborting the wipe — the whole
+    /// point is to remove as much as possible under duress.
+    pub fn wipe(&mut self) -> Result<()> {
+        for entry in self.index.entries.clone() {
+            let path = self.path_for(&entry);
+            if path.exists() {
+                let _ = std::fs::remove_file(&path);
+            }
+        }
+        self.index.entries.clear();
+        self.index.active = None;
+        self.save()
+    }
+
     fn next_id(&self) -> String {
         // Sequential rather than random: the id is a file stem, not a secret,
         // and a predictable one is far easier to reason about when someone is
@@ -592,6 +614,25 @@ mod tests {
             assert_eq!(entry.recipient, made.recipient);
             assert_eq!(store.load(&entry.id, None).expect("load").len(), 1);
         }
+    }
+
+    #[test]
+    fn wipe_removes_every_identity_and_its_key_file() {
+        let root = scratch("wipe");
+        let mut store = Store::open(&root).expect("open");
+        let a = store.generate("One", Kind::X25519, None).expect("a");
+        let b = store.generate("Two", Kind::PostQuantum, None).expect("b");
+        let pa = store.path_for(&a);
+        let pb = store.path_for(&b);
+        assert!(pa.exists() && pb.exists());
+
+        store.wipe().expect("wipe");
+        assert!(store.entries().is_empty());
+        assert!(store.active_id().is_none());
+        assert!(!pa.exists() && !pb.exists(), "key files must be gone");
+
+        // A reopened store is empty too.
+        assert!(Store::open(&root).expect("reopen").entries().is_empty());
     }
 
     #[test]

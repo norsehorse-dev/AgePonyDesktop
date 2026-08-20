@@ -37,6 +37,7 @@ pub mod decrypt;
 pub mod encrypt;
 pub mod error;
 pub mod identity;
+pub mod migrate;
 pub mod passphrase;
 pub mod porting;
 pub mod pq;

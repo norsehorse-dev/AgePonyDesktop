@@ -308,6 +308,22 @@ impl SigningStore {
         super::sign_detached(&openssh, message, super::NAMESPACE)
     }
 
+    /// Delete every signing key and its key material — part of the panic wipe.
+    ///
+    /// # Errors
+    ///
+    /// [`CoreError::Io`] if the emptied index cannot be written.
+    pub fn wipe(&mut self) -> Result<()> {
+        for entry in self.index.entries.clone() {
+            let path = self.path_for(&entry);
+            if path.exists() {
+                let _ = std::fs::remove_file(&path);
+            }
+        }
+        self.index.entries.clear();
+        self.save()
+    }
+
     fn next_id(&self) -> String {
         let mut n = self.index.entries.len() + 1;
         loop {

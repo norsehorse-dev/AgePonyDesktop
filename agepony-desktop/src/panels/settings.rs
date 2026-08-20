@@ -61,6 +61,9 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         }
     });
 
+    // ---- migration -------------------------------------------------------
+    migration_section(app, ui);
+
     // ---- about -----------------------------------------------------------
     theme::card(ui, |ui| {
         theme::section(ui, "About");
@@ -88,6 +91,9 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         ui.weak("Apache-2.0.");
     });
 
+    // ---- panic wipe ------------------------------------------------------
+    panic_wipe_section(app, ui);
+
     // ---- the family ------------------------------------------------------
     theme::card(ui, |ui| {
         theme::section(ui, "More from NorseHorse");
@@ -110,6 +116,205 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
              request — these are addresses, not connections.",
         );
     });
+}
+
+/// The "upgrade to quantum-safe" batch: re-encrypt existing age files to a
+/// post-quantum identity, keeping the originals.
+fn migration_section(app: &mut App, ui: &mut egui::Ui) {
+    theme::card(ui, |ui| {
+        theme::section(ui, "Upgrade files to quantum-safe");
+        ui.add_space(theme::space::SM);
+        ui.weak(
+            "Re-encrypt existing age files to a quantum-safe identity. AgePony decrypts each \
+             with your identities (or the passphrase below) and writes a new copy to a folder \
+             you choose. The originals are left where they are.",
+        );
+        ui.add_space(theme::space::SM);
+
+        let pq: Vec<(String, String)> = app
+            .store
+            .entries()
+            .iter()
+            .filter(|e| e.kind.is_post_quantum())
+            .map(|e| (e.id.clone(), e.label.clone()))
+            .collect();
+
+        if pq.is_empty() {
+            ui.colored_label(
+                theme::danger_ink(ui),
+                "No quantum-safe identity yet. Create one on Identities (Generate → Quantum-safe), \
+                 then come back.",
+            );
+            return;
+        }
+
+        theme::section(ui, "Quantum-safe identity");
+        if app.migrate.target_id.is_none() {
+            app.migrate.target_id = pq.first().map(|(id, _)| id.clone());
+        }
+        for (id, label) in &pq {
+            let selected = app.migrate.target_id.as_deref() == Some(id);
+            if ui.radio(selected, label).clicked() {
+                app.migrate.target_id = Some(id.clone());
+            }
+        }
+
+        ui.add_space(theme::space::SM);
+        ui.horizontal(|ui| {
+            if theme::secondary_button(ui, "Choose files…").clicked() {
+                if let Some(files) = rfd::FileDialog::new().pick_files() {
+                    app.migrate.files = files;
+                }
+            }
+            ui.weak(match app.migrate.files.len() {
+                0 => "No files chosen".to_owned(),
+                1 => "1 file".to_owned(),
+                n => format!("{n} files"),
+            });
+        });
+        ui.horizontal(|ui| {
+            if theme::secondary_button(ui, "Choose destination folder…").clicked() {
+                if let Some(dir) = rfd::FileDialog::new().pick_folder() {
+                    app.migrate.dest = Some(dir);
+                }
+            }
+            match &app.migrate.dest {
+                Some(d) => ui.weak(d.display().to_string()),
+                None => ui.weak("No folder chosen"),
+            };
+        });
+        ui.horizontal(|ui| {
+            ui.label("Passphrase (optional)");
+            ui.add(
+                egui::TextEdit::singleline(&mut app.migrate.passphrase)
+                    .password(true)
+                    .hint_text("For any passphrase-encrypted files")
+                    .desired_width(240.0),
+            );
+        });
+
+        ui.add_space(theme::space::SM);
+        let busy = app.migrate.job.as_ref().is_some_and(tasks::Running::in_flight);
+        let can = !busy
+            && app.migrate.target_id.is_some()
+            && !app.migrate.files.is_empty()
+            && app.migrate.dest.is_some();
+        if theme::primary_button_enabled(ui, "Upgrade", can).clicked() {
+            start_migration(app, ui.ctx().clone());
+        }
+
+        // Live results.
+        if let Some(job) = &app.migrate.job {
+            ui.add_space(theme::space::SM);
+            ui.weak(format!(
+                "{} of {} done{}",
+                job.done.len() + job.failed.len(),
+                job.total(),
+                if job.in_flight() { "…" } else { "" }
+            ));
+            for outcome in &job.done {
+                let name = outcome
+                    .input
+                    .file_name()
+                    .map_or_else(String::new, |n| n.to_string_lossy().into_owned());
+                ui.colored_label(theme::ACCENT, format!("✓ {name}"));
+            }
+            for (input, why) in &job.failed {
+                let name = input
+                    .file_name()
+                    .map_or_else(String::new, |n| n.to_string_lossy().into_owned());
+                ui.colored_label(theme::danger_ink(ui), format!("⚠ {name} — {why}"));
+            }
+        }
+    });
+}
+
+/// The panic wipe: one deliberate, confirmed action that deletes everything the
+/// stores hold. Desktop has no app-lock to hang a decoy password on (see
+/// PARITY_PLAN F5), so this is an explicit action, not a decoy.
+fn panic_wipe_section(app: &mut App, ui: &mut egui::Ui) {
+    const CONFIRM: &str = "DELETE";
+    theme::card(ui, |ui| {
+        theme::section(ui, "Panic wipe");
+        ui.add_space(theme::space::SM);
+        ui.colored_label(
+            theme::danger_ink(ui),
+            "Delete every identity, signing key, recipient, and trusted signer, and their key \
+             files on disk. This cannot be undone.",
+        );
+        ui.add_space(theme::space::SM);
+        ui.horizontal(|ui| {
+            ui.label(format!("Type {CONFIRM} to confirm:"));
+            ui.add(
+                egui::TextEdit::singleline(&mut app.wipe_confirm)
+                    .hint_text(CONFIRM)
+                    .desired_width(120.0),
+            );
+        });
+        ui.add_space(theme::space::TIGHT);
+        let armed = app.wipe_confirm == CONFIRM;
+        if theme::primary_button_enabled(ui, "Wipe everything", armed).clicked() {
+            run_panic_wipe(app);
+        }
+    });
+}
+
+fn run_panic_wipe(app: &mut App) {
+    let mut trouble = None;
+    if let Err(e) = app.store.wipe() {
+        trouble = Some(e.to_string());
+    }
+    if let Err(e) = app.signing_store.wipe() {
+        trouble = Some(e.to_string());
+    }
+    app.signers.clear();
+    app.save_signers();
+    app.book.entries.clear();
+    app.save_book();
+
+    app.wipe_confirm.clear();
+    app.status = Some(match trouble {
+        Some(why) => format!("Wipe finished with a problem: {why}"),
+        None => "Everything has been wiped.".to_owned(),
+    });
+}
+
+fn start_migration(app: &mut App, ctx: egui::Context) {
+    let Some(target_id) = app.migrate.target_id.clone() else {
+        return;
+    };
+    let Some(target_entry) = app.store.get(&target_id) else {
+        return;
+    };
+    let target = target_entry.recipient.clone();
+    let dest_dir = match app.migrate.dest.clone() {
+        Some(d) => d,
+        None => return,
+    };
+    // Every unprotected identity is a candidate decryptor for the old files.
+    let identity_files: Vec<std::path::PathBuf> = app
+        .store
+        .entries()
+        .iter()
+        .filter(|e| !e.encrypted)
+        .map(|e| app.store.path_for(e))
+        .collect();
+    let passphrase = (!app.migrate.passphrase.is_empty())
+        .then(|| age::secrecy::SecretString::from(app.migrate.passphrase.clone()));
+    let inputs = app.migrate.files.clone();
+
+    let repaint = move || ctx.request_repaint();
+    app.status = None;
+    app.migrate.job = Some(tasks::spawn(
+        tasks::Job::Migrate {
+            inputs,
+            target,
+            identity_files,
+            passphrase,
+            dest_dir,
+        },
+        repaint,
+    ));
 }
 
 /// One sibling app: name, what it does, where it runs, where it lives, and the

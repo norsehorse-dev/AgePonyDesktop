@@ -70,6 +70,20 @@ pub enum Job {
         /// Identity files to try, or a passphrase.
         unlock: Unlock,
     },
+    /// Re-encrypt every file in `inputs` to `target`, into `dest_dir` — the
+    /// "upgrade to quantum-safe" batch. Originals are left untouched.
+    Migrate {
+        /// Source `.age` files.
+        inputs: Vec<PathBuf>,
+        /// The target recipient string (a post-quantum `age1pq1…`).
+        target: String,
+        /// Identity files to decrypt the inputs with.
+        identity_files: Vec<PathBuf>,
+        /// A shared passphrase for passphrase-encrypted inputs.
+        passphrase: Option<SecretString>,
+        /// Where the re-encrypted copies are written.
+        dest_dir: PathBuf,
+    },
 }
 
 /// How a decrypt batch should be unlocked.
@@ -229,7 +243,8 @@ pub fn spawn(job: Job, repaint: impl Fn() + Send + 'static) -> Running {
     let total = match &job {
         Job::Encrypt { inputs, .. }
         | Job::Decrypt { inputs, .. }
-        | Job::EncryptBundle { inputs, .. } => inputs.len(),
+        | Job::EncryptBundle { inputs, .. }
+        | Job::Migrate { inputs, .. } => inputs.len(),
     };
 
     std::thread::spawn(move || {
@@ -372,6 +387,71 @@ pub fn spawn(job: Job, repaint: impl Fn() + Send + 'static) -> Running {
                     let mut on_progress = file_progress(&tx, &worker_cancel);
                     let result = decrypt_file(input, &output, with, &mut on_progress);
                     report(&send, input, &output, result);
+                }
+            }
+            Job::Migrate {
+                inputs,
+                target,
+                identity_files,
+                passphrase,
+                dest_dir,
+            } => {
+                let target = match agepony_core::recipient::parse(&target) {
+                    Ok(t) => t,
+                    Err(e) => {
+                        for input in &inputs {
+                            let _ = send(Update::FileFailed(input.clone(), e.to_string()));
+                        }
+                        let _ = send(Update::Finished);
+                        return;
+                    }
+                };
+                // Load the unprotected identities once; scrypt on a protected
+                // identity per file would be pointless work, and the flow uses
+                // the shared passphrase for passphrase-encrypted inputs instead.
+                let mut identities: Vec<Box<dyn age::Identity + Send + Sync>> = Vec::new();
+                for f in &identity_files {
+                    if let Ok(mut v) =
+                        agepony_core::identity::load_file_maybe_encrypted(f, None)
+                    {
+                        identities.append(&mut v);
+                    }
+                }
+
+                for input in &inputs {
+                    if worker_cancel.load(Ordering::Relaxed) {
+                        break;
+                    }
+                    let _ = send(Update::Started(input.clone()));
+                    let result = std::fs::read(input).map_err(|e| e.to_string()).and_then(|bytes| {
+                        agepony_core::migrate::reencrypt(
+                            &bytes,
+                            &identities,
+                            passphrase.as_ref(),
+                            &target,
+                        )
+                        .map_err(|e| e.to_string())
+                    });
+                    match result {
+                        Ok(out_bytes) => {
+                            let name = input.file_name().map_or_else(
+                                || "file.age".to_owned(),
+                                |n| n.to_string_lossy().into_owned(),
+                            );
+                            let out = unique_path(&dest_dir.join(name));
+                            match std::fs::write(&out, out_bytes) {
+                                Ok(()) => {
+                                    let _ = send(Update::FileDone(input.clone(), out));
+                                }
+                                Err(e) => {
+                                    let _ = send(Update::FileFailed(input.clone(), e.to_string()));
+                                }
+                            }
+                        }
+                        Err(why) => {
+                            let _ = send(Update::FileFailed(input.clone(), why));
+                        }
+                    }
                 }
             }
         }
