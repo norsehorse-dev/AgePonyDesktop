@@ -145,6 +145,48 @@ pub fn decrypt_to_memory(
     Ok(out)
 }
 
+/// Decrypt `ciphertext` held in memory to a [`Zeroizing`] plaintext buffer,
+/// with identities or a passphrase.
+///
+/// This is the Text screen's counterpart to [`decrypt_file`]. Unlike
+/// [`decrypt_to_memory`], which is identity-only and exists for key material, a
+/// pasted note may just as well be passphrase-encrypted, so this takes the full
+/// [`With`]. The result is [`Zeroizing`] because this is the one path where
+/// plaintext returns to the UI rather than going straight to a file; the caller
+/// must not copy it into a buffer that outlives use.
+///
+/// Accepts both binary and ASCII-armored input.
+///
+/// # Errors
+///
+/// [`CoreError::NoIdentities`] for an empty identity set, or
+/// [`CoreError::Decrypt`] for a wrong identity/passphrase or a failed tag.
+pub fn decrypt_bytes(
+    ciphertext: &[u8],
+    with: With<'_>,
+) -> Result<zeroize::Zeroizing<Vec<u8>>> {
+    let armored = ArmoredReader::new(ciphertext);
+    let decryptor = age::Decryptor::new(armored)?;
+
+    let passphrase_identity;
+    let mut reader = match with {
+        With::Identities(ids) => {
+            if ids.is_empty() {
+                return Err(CoreError::NoIdentities);
+            }
+            decryptor.decrypt(ids.iter().map(|i| i.as_ref() as &dyn age::Identity))?
+        }
+        With::Passphrase(p) => {
+            passphrase_identity = crate::passphrase::identity(p);
+            decryptor.decrypt(std::iter::once(&passphrase_identity as &dyn age::Identity))?
+        }
+    };
+
+    let mut out = zeroize::Zeroizing::new(Vec::new());
+    Read::read_to_end(&mut reader, &mut out)?;
+    Ok(out)
+}
+
 /// The conventional output path for decrypting `input`: strip a trailing
 /// `.age`, or append `.decrypted` if there is nothing to strip.
 #[must_use]
@@ -211,6 +253,94 @@ mod tests {
         // Missing files answer false rather than erroring: the seal path will
         // produce the real complaint about an unreadable file.
         assert!(!looks_like_age_file(&dir.join("no-such-file")));
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn text_round_trips_through_recipients() {
+        let id = age::x25519::Identity::generate();
+        let parsed = crate::recipient::parse(&id.to_public().to_string()).expect("recipient");
+        let ct = crate::encrypt::encrypt_bytes(
+            b"shopping: oats, apples, horseshoes",
+            crate::encrypt::To::Recipients(std::slice::from_ref(&parsed)),
+            true,
+        )
+        .expect("encrypt");
+        // Armored output is meant to be copied, so it must be ASCII text.
+        assert!(ct.starts_with(b"-----BEGIN AGE ENCRYPTED FILE-----"));
+
+        let ids: Vec<Box<dyn age::Identity + Send + Sync>> = vec![Box::new(id)];
+        let pt = decrypt_bytes(&ct, With::Identities(&ids)).expect("decrypt");
+        assert_eq!(&pt[..], b"shopping: oats, apples, horseshoes");
+    }
+
+    #[test]
+    fn text_round_trips_through_passphrase() {
+        let ct = crate::encrypt::encrypt_bytes(
+            b"correct horse",
+            crate::encrypt::To::Passphrase(SecretString::from("battery staple".to_owned())),
+            true,
+        )
+        .expect("encrypt");
+        let pt = decrypt_bytes(
+            &ct,
+            With::Passphrase(SecretString::from("battery staple".to_owned())),
+        )
+        .expect("decrypt");
+        assert_eq!(&pt[..], b"correct horse");
+
+        assert!(
+            decrypt_bytes(
+                &ct,
+                With::Passphrase(SecretString::from("wrong".to_owned()))
+            )
+            .is_err(),
+            "a wrong passphrase must be refused"
+        );
+    }
+
+    #[test]
+    fn text_and_file_modes_are_the_same_format() {
+        // Text encrypted in memory must open with the file decryptor, and a
+        // file encrypted to disk must open with the in-memory decryptor:
+        // proof the two paths are one format, not two.
+        let id = age::x25519::Identity::generate();
+        let parsed = crate::recipient::parse(&id.to_public().to_string()).expect("recipient");
+        let ids: Vec<Box<dyn age::Identity + Send + Sync>> = vec![Box::new(id)];
+
+        let dir = std::env::temp_dir().join("agepony-text-file-parity");
+        let _ = fs::create_dir_all(&dir);
+
+        // in-memory encrypt -> file decrypt
+        let ct = crate::encrypt::encrypt_bytes(
+            b"one format",
+            crate::encrypt::To::Recipients(std::slice::from_ref(&parsed)),
+            false,
+        )
+        .expect("encrypt bytes");
+        let ct_path = dir.join("mem.age");
+        fs::write(&ct_path, &ct).expect("write ct");
+        let out_path = dir.join("mem.out");
+        decrypt_file(&ct_path, &out_path, With::Identities(&ids), &mut |_| true)
+            .expect("file decrypt of in-memory ciphertext");
+        assert_eq!(fs::read(&out_path).expect("read out"), b"one format");
+
+        // file encrypt -> in-memory decrypt
+        let plain_path = dir.join("plain.txt");
+        fs::write(&plain_path, b"other way").expect("write plain");
+        let file_ct = dir.join("plain.txt.age");
+        crate::encrypt::encrypt_file(
+            &plain_path,
+            &file_ct,
+            crate::encrypt::To::Recipients(std::slice::from_ref(&parsed)),
+            false,
+            &mut |_| true,
+        )
+        .expect("file encrypt");
+        let pt = decrypt_bytes(&fs::read(&file_ct).expect("read ct"), With::Identities(&ids))
+            .expect("in-memory decrypt of file ciphertext");
+        assert_eq!(&pt[..], b"other way");
 
         let _ = fs::remove_dir_all(&dir);
     }

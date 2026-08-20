@@ -281,6 +281,7 @@ dependencies = [
  "serde",
  "serde_json",
  "ttf-parser",
+ "zeroize",
 ]
 
 [[package]]

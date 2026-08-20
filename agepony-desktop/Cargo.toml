@@ -64,6 +64,7 @@ license = false
 [dependencies]
 agepony-core = { path = "../agepony-core" }
 age.workspace = true
+zeroize.workspace = true
 eframe = { version = "=0.35.0", features = ["persistence"] }
 egui = "=0.35.0"
 rfd = "0.15"

@@ -22,6 +22,8 @@ pub enum Tab {
     #[default]
     #[serde(alias = "Encrypt", alias = "Decrypt")]
     Files,
+    /// Encrypting and decrypting pasted text, not files.
+    Text,
     /// Identity management.
     Identities,
     /// The recipient book.
@@ -31,11 +33,18 @@ pub enum Tab {
 }
 
 impl Tab {
-    pub(crate) const ALL: [Tab; 4] = [Tab::Files, Tab::Identities, Tab::Recipients, Tab::Settings];
+    pub(crate) const ALL: [Tab; 5] = [
+        Tab::Files,
+        Tab::Text,
+        Tab::Identities,
+        Tab::Recipients,
+        Tab::Settings,
+    ];
 
     pub(crate) const fn label(self) -> &'static str {
         match self {
             Tab::Files => "Files",
+            Tab::Text => "Text",
             Tab::Identities => "Identities",
             Tab::Recipients => "Recipients",
             Tab::Settings => "Settings",
@@ -46,6 +55,9 @@ impl Tab {
     pub(crate) const fn icon(self) -> char {
         match self {
             Tab::Files => crate::theme::icon::FILES,
+            // Reuses the compose glyph; the icon face is subset to the declared
+            // set, so a distinct Text/Sign glyph needs the font re-subset first.
+            Tab::Text => crate::theme::icon::PENCIL,
             Tab::Identities => crate::theme::icon::KEY_ROUND,
             Tab::Recipients => crate::theme::icon::USERS,
             Tab::Settings => crate::theme::icon::SETTINGS,
@@ -177,6 +189,86 @@ impl FilesState {
     }
 }
 
+/// The result of the last Text operation.
+///
+/// Ciphertext is public and safe to keep across frames; decrypted plaintext is
+/// held in a [`Zeroizing`] buffer so it is wiped when it is replaced or cleared,
+/// honouring the "plaintext never lingers" invariant in a screen that — unlike
+/// the file path — necessarily shows it.
+#[derive(Default)]
+pub enum TextOutput {
+    /// Nothing produced yet.
+    #[default]
+    Empty,
+    /// Armored ciphertext from an encrypt. Public; safe to display and keep.
+    Ciphertext(String),
+    /// Plaintext from a decrypt. Zeroized on drop and on clear.
+    Plaintext(zeroize::Zeroizing<String>),
+}
+
+impl TextOutput {
+    /// The text to show and copy, if any.
+    #[must_use]
+    pub fn as_str(&self) -> Option<&str> {
+        match self {
+            TextOutput::Empty => None,
+            TextOutput::Ciphertext(s) => Some(s),
+            TextOutput::Plaintext(s) => Some(s),
+        }
+    }
+
+    /// Whether this output is decrypted plaintext (shown with a warning).
+    #[must_use]
+    pub fn is_plaintext(&self) -> bool {
+        matches!(self, TextOutput::Plaintext(_))
+    }
+}
+
+/// Everything the Text screen remembers between frames.
+///
+/// A departure from the file path, which never holds plaintext at all: text
+/// mode must show a decrypted note, so `input` and `output` can carry secrets.
+/// Both are cleared on Escape, on leaving the tab, and by the Clear button, and
+/// the decrypted `output` is [`Zeroizing`].
+#[derive(Default)]
+pub struct TextState {
+    /// Decrypt (true) vs encrypt (false).
+    pub decrypt: bool,
+    /// The text being encrypted, or the armored ciphertext being decrypted.
+    pub input: String,
+    /// The result of the last run.
+    pub output: TextOutput,
+
+    // ---- encrypt --------------------------------------------------------
+    /// Names of the book entries that are ticked.
+    pub picked: BTreeSet<String>,
+    /// Recipients typed directly, one per line.
+    pub extra: String,
+    /// Use a passphrase instead of recipients.
+    pub use_passphrase: bool,
+    /// The sealing passphrase.
+    pub passphrase: String,
+
+    // ---- decrypt --------------------------------------------------------
+    /// Where the identity comes from.
+    pub source: DecryptSource,
+    /// The passphrase that unlocks a protected active identity.
+    pub identity_passphrase: String,
+    /// The passphrase for a passphrase-encrypted message.
+    pub open_passphrase: String,
+}
+
+impl TextState {
+    /// Drop any secrets held in the screen's buffers.
+    pub fn clear_secrets(&mut self) {
+        self.input.clear();
+        self.output = TextOutput::Empty;
+        self.passphrase.clear();
+        self.identity_passphrase.clear();
+        self.open_passphrase.clear();
+    }
+}
+
 /// Transient state for the Identities panel.
 #[derive(Default)]
 pub struct IdentitiesUi {
@@ -284,6 +376,8 @@ pub struct App {
     pub tab: Tab,
     /// Files screen state.
     pub files: FilesState,
+    /// Text screen state.
+    pub text: TextState,
     /// Identities panel state.
     pub identities: IdentitiesUi,
     /// Recipients panel state.
@@ -364,6 +458,7 @@ impl App {
                 source: prefs.decrypt_source,
                 ..FilesState::default()
             },
+            text: TextState::default(),
             identities: IdentitiesUi {
                 show_qr: prefs.show_qr,
                 ..IdentitiesUi::default()
@@ -429,14 +524,22 @@ impl App {
     fn handle_shortcuts(&mut self, ctx: &egui::Context) {
         use egui::{Key, Modifiers};
 
+        // Data-driven over Tab::ALL so ⌘1…⌘9 track the rail rather than a
+        // hardcoded four. A tab past nine simply has no digit shortcut.
+        const DIGIT_KEYS: [Key; 9] = [
+            Key::Num1,
+            Key::Num2,
+            Key::Num3,
+            Key::Num4,
+            Key::Num5,
+            Key::Num6,
+            Key::Num7,
+            Key::Num8,
+            Key::Num9,
+        ];
         for (i, tab) in Tab::ALL.iter().enumerate() {
-            let key = match i {
-                0 => Key::Num1,
-                1 => Key::Num2,
-                2 => Key::Num3,
-                _ => Key::Num4,
-            };
-            if ctx.input_mut(|inp| inp.consume_key(Modifiers::COMMAND, key)) {
+            let Some(key) = DIGIT_KEYS.get(i) else { break };
+            if ctx.input_mut(|inp| inp.consume_key(Modifiers::COMMAND, *key)) {
                 self.tab = *tab;
             }
         }
@@ -445,10 +548,12 @@ impl App {
             self.choose_files();
         }
 
-        if ctx.input_mut(|i| i.consume_key(Modifiers::COMMAND, Key::Enter))
-            && self.tab == Tab::Files
-        {
-            crate::panels::files::run_all(self, ctx.clone());
+        if ctx.input_mut(|i| i.consume_key(Modifiers::COMMAND, Key::Enter)) {
+            match self.tab {
+                Tab::Files => crate::panels::files::run_all(self, ctx.clone()),
+                Tab::Text => crate::panels::text::run(self),
+                _ => {}
+            }
         }
 
         if ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Escape)) {
@@ -499,7 +604,21 @@ impl App {
             self.recipients.editing = None;
             return;
         }
+        // On the Text screen, Escape wipes whatever secret is on show.
+        if self.tab == Tab::Text && (!self.text.input.is_empty() || self.text.output.as_str().is_some())
+        {
+            self.text.clear_secrets();
+            return;
+        }
         self.status = None;
+    }
+
+    /// Wipe the Text screen's decrypted plaintext when the user navigates away,
+    /// so a decrypted note does not sit on a screen the user is no longer on.
+    fn wipe_text_plaintext_off_tab(&mut self) {
+        if self.tab != Tab::Text && self.text.output.is_plaintext() {
+            self.text.output = TextOutput::Empty;
+        }
     }
 
     /// A translucent overlay while files are held over the window.
@@ -555,6 +674,7 @@ impl eframe::App for App {
         }
         self.handle_drops(ctx);
         self.handle_shortcuts(ctx);
+        self.wipe_text_plaintext_off_tab();
 
         // Drain worker updates before drawing, so this frame shows the newest
         // progress rather than last frame's. A finished job's results are
@@ -674,6 +794,7 @@ impl eframe::App for App {
         egui::CentralPanel::default().show(ui, |ui| {
             egui::ScrollArea::vertical().show(ui, |ui| match self.tab {
                 Tab::Files => panels::files::show(self, ui),
+                Tab::Text => panels::text::show(self, ui),
                 Tab::Identities => panels::identities::show(self, ui),
                 Tab::Recipients => panels::recipients::show(self, ui),
                 Tab::Settings => panels::settings::show(self, ui),

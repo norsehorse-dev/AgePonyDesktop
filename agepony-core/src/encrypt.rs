@@ -166,6 +166,46 @@ pub fn encrypt_file(
     guard.commit()
 }
 
+/// Encrypt `plaintext` held in memory and return the ciphertext.
+///
+/// This is the Text screen's counterpart to [`encrypt_file`]: a pasted note is
+/// small and never touches the filesystem, so it is encrypted straight to a
+/// `Vec` rather than streamed to a sibling dotfile. Text output is meant to be
+/// copied, so callers pass `armor = true`; the flag stays general.
+///
+/// # Errors
+///
+/// [`CoreError::NoRecipients`], [`CoreError::MixedPostQuantum`], or an
+/// [`age::EncryptError`].
+pub fn encrypt_bytes(plaintext: &[u8], to: To<'_>, armor: bool) -> Result<Vec<u8>> {
+    let encryptor = match to {
+        To::Recipients(rs) => {
+            if rs.is_empty() {
+                return Err(CoreError::NoRecipients);
+            }
+            let pq = rs.iter().filter(|r| r.kind.is_post_quantum()).count();
+            if pq != 0 && pq != rs.len() {
+                return Err(CoreError::MixedPostQuantum);
+            }
+            age::Encryptor::with_recipients(rs.iter().map(|r| r.recipient.as_ref() as _))?
+        }
+        To::Passphrase(p) => crate::passphrase::encryptor(p)?,
+    };
+
+    let mut out = Vec::new();
+    if armor {
+        let armored = ArmoredWriter::wrap_output(&mut out, Format::AsciiArmor)?;
+        let mut writer = encryptor.wrap_output(armored)?;
+        writer.write_all(plaintext)?;
+        writer.finish()?.finish()?;
+    } else {
+        let mut writer = encryptor.wrap_output(&mut out)?;
+        writer.write_all(plaintext)?;
+        writer.finish()?;
+    }
+    Ok(out)
+}
+
 /// Wrap `sink`, copy the whole of `reader` through it, and finish the stream.
 fn pump<W: Write, R: Read>(
     encryptor: age::Encryptor,

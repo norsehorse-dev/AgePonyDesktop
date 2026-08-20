@@ -4,3 +4,4 @@ pub mod files;
 pub mod identities;
 pub mod recipients;
 pub mod settings;
+pub mod text;
