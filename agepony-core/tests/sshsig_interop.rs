@@ -19,14 +19,15 @@ const RSA_KEY: &str = include_str!("fixtures/sshsig_rsa_key");
 const RSA_PUB: &str = include_str!("fixtures/sshsig_rsa_key.pub");
 
 fn have_ssh_keygen() -> bool {
-    // Presence, not exit code: ssh-keygen with no real work exits non-zero, but
-    // the process spawning at all means it is installed.
-    // No args: ssh-keygen prints usage and exits non-zero, with no side effects.
-    Command::new("ssh-keygen")
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .is_ok()
+    // Look for the binary on PATH rather than running it. Running `ssh-keygen`
+    // with no arguments prints usage and exits on Linux, but on macOS it drops
+    // into an interactive prompt and blocks on stdin — which would hang the
+    // test. A PATH lookup has neither the hang nor any side effect.
+    std::env::var_os("PATH").is_some_and(|paths| {
+        std::env::split_paths(&paths).any(|dir| {
+            dir.join("ssh-keygen").is_file() || dir.join("ssh-keygen.exe").is_file()
+        })
+    })
 }
 
 /// `ssh-keygen -Y verify` accepts our signature against an allowed_signers file
