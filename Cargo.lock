@@ -256,6 +256,7 @@ dependencies = [
  "hkdf 0.13.0",
  "ml-kem",
  "proptest",
+ "rand_core 0.6.4",
  "rsa",
  "serde",
  "serde_json",

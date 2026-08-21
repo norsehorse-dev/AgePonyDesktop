@@ -336,15 +336,7 @@ pub struct SignState {
     /// The name typed to trust an unknown-but-valid signer.
     pub trust_name: String,
 
-    // ---- keys / signers forms ------------------------------------------
-    /// Label for a signing key being imported.
-    pub new_key_label: String,
-    /// Passphrase unlocking the source OpenSSH key on import.
-    pub import_key_passphrase: String,
-    /// Passphrase to protect the imported key in the store.
-    pub protect_passphrase: String,
-    /// Protect the imported key with a passphrase.
-    pub protect_key: bool,
+    // ---- signers form ---------------------------------------------------
     /// Name for a trusted signer being pasted.
     pub new_signer_name: String,
     /// The SSH public-key line for a trusted signer being pasted.
@@ -381,6 +373,10 @@ pub struct IdentitiesUi {
     pub renaming: Option<(String, String)>,
     /// Id pending deletion, and the confirmation text typed so far.
     pub deleting: Option<(String, String)>,
+    /// Signing-key id being renamed, and the text typed so far.
+    pub ssh_renaming: Option<(String, String)>,
+    /// Signing-key id pending deletion, and the confirmation text typed so far.
+    pub ssh_deleting: Option<(String, String)>,
     /// Whether the porting QR code is on screen.
     pub show_qr: bool,
     /// Cached QR code, keyed by the recipient it encodes. Rebuilding a
@@ -731,6 +727,14 @@ impl App {
         }
         if self.identities.renaming.is_some() {
             self.identities.renaming = None;
+            return;
+        }
+        if self.identities.ssh_deleting.is_some() {
+            self.identities.ssh_deleting = None;
+            return;
+        }
+        if self.identities.ssh_renaming.is_some() {
+            self.identities.ssh_renaming = None;
             return;
         }
         if self.recipients.form_open {

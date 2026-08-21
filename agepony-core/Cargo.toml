@@ -38,6 +38,8 @@ ssh-key = { version = "0.6", default-features = false, features = ["ed25519", "r
 # Pinned to the same sha2 (0.10) rsa 0.9 uses, so the pkcs1v15 digest lines up.
 rsa = "0.9"
 sha2_rsa = { package = "sha2", version = "0.10", features = ["oid"] }
+# OsRng for generating SSH signing keys. rand_core 0.6 matches ssh-key's.
+rand_core = { version = "0.6.4", features = ["getrandom"] }
 
 [dev-dependencies]
 age-core.workspace = true

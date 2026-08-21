@@ -33,7 +33,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
             SignMode::Verify => 1,
             SignMode::Keys => 2,
         };
-        if let Some(i) = theme::segmented(ui, &["Sign", "Verify", "Keys"], selected) {
+        if let Some(i) = theme::segmented(ui, &["Sign", "Verify", "Signers"], selected) {
             app.sign.mode = match i {
                 1 => SignMode::Verify,
                 2 => SignMode::Keys,
@@ -334,104 +334,9 @@ fn show_verdict(app: &mut App, ui: &mut egui::Ui) {
 // -------------------------------------------------------------------- keys ---
 
 fn keys_screen(app: &mut App, ui: &mut egui::Ui) {
-    signing_keys_section(app, ui);
-    ui.add_space(theme::space::SECTION);
-    trusted_signers_section(app, ui);
-}
-
-fn signing_keys_section(app: &mut App, ui: &mut egui::Ui) {
-    theme::section(ui, "Your signing keys");
-    theme::card(ui, |ui| {
-        ui.label("Import an OpenSSH private key to sign with.");
-        ui.add_space(theme::space::SM);
-        ui.horizontal(|ui| {
-            ui.label("Label");
-            ui.add(
-                egui::TextEdit::singleline(&mut app.sign.new_key_label)
-                    .hint_text("e.g. Laptop SSH")
-                    .desired_width(220.0),
-            );
-        });
-        ui.horizontal(|ui| {
-            ui.checkbox(&mut app.sign.protect_key, "Protect with a passphrase");
-            if app.sign.protect_key {
-                ui.add(
-                    egui::TextEdit::singleline(&mut app.sign.protect_passphrase)
-                        .password(true)
-                        .hint_text("New passphrase")
-                        .desired_width(200.0),
-                );
-            }
-        });
-        ui.horizontal(|ui| {
-            ui.label("If the key file is itself encrypted:");
-            ui.add(
-                egui::TextEdit::singleline(&mut app.sign.import_key_passphrase)
-                    .password(true)
-                    .hint_text("Its passphrase")
-                    .desired_width(200.0),
-            );
-        });
-        let can = !app.sign.new_key_label.trim().is_empty();
-        if theme::primary_button_enabled(ui, "Choose key file & import…", can).clicked() {
-            if let Some(path) = rfd::FileDialog::new().pick_file() {
-                import_signing_key(app, &path);
-            }
-        }
-    });
-
+    ui.weak("Your signing keys live on the Identities screen — generate or import them there.");
     ui.add_space(theme::space::SM);
-    let mut delete: Option<String> = None;
-    for e in app.signing_store.entries() {
-        theme::card(ui, |ui| {
-            ui.horizontal(|ui| {
-                ui.strong(&e.label);
-                theme::capsule(ui, e.kind.label(), theme::ACCENT);
-                if e.encrypted {
-                    ui.weak("passphrase");
-                }
-            });
-            ui.add(egui::Label::new(egui::RichText::new(&e.fingerprint).monospace().size(11.0)).wrap());
-            if theme::secondary_button(ui, "Delete").clicked() {
-                delete = Some(e.id.clone());
-            }
-        });
-    }
-    if let Some(id) = delete {
-        match app.signing_store.delete(&id) {
-            Ok(()) => app.status = Some("Signing key deleted.".to_owned()),
-            Err(e) => app.status = Some(e.to_string()),
-        }
-    }
-}
-
-fn import_signing_key(app: &mut App, path: &std::path::Path) {
-    let text = match std::fs::read_to_string(path) {
-        Ok(t) => t,
-        Err(e) => {
-            app.status = Some(format!("Couldn't read the key file: {e}"));
-            return;
-        }
-    };
-    let label = app.sign.new_key_label.trim().to_owned();
-    let source_pass = (!app.sign.import_key_passphrase.is_empty())
-        .then(|| age::secrecy::SecretString::from(app.sign.import_key_passphrase.clone()));
-    let protect_pass = (app.sign.protect_key && !app.sign.protect_passphrase.is_empty())
-        .then(|| age::secrecy::SecretString::from(app.sign.protect_passphrase.clone()));
-
-    match app
-        .signing_store
-        .import(&label, &text, source_pass.as_ref(), protect_pass.as_ref())
-    {
-        Ok(_) => {
-            app.sign.new_key_label.clear();
-            app.sign.import_key_passphrase.clear();
-            app.sign.protect_passphrase.clear();
-            app.sign.protect_key = false;
-            app.status = Some("Signing key imported.".to_owned());
-        }
-        Err(e) => app.status = Some(e.to_string()),
-    }
+    trusted_signers_section(app, ui);
 }
 
 fn trusted_signers_section(app: &mut App, ui: &mut egui::Ui) {

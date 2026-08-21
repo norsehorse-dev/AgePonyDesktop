@@ -3,6 +3,7 @@
 use crate::app::App;
 use crate::theme;
 use age::secrecy::SecretString;
+use agepony_core::signing::store::SigningKind;
 use agepony_core::store::Kind;
 
 /// Draw the panel.
@@ -24,6 +25,8 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
     } else {
         list(app, ui);
     }
+
+    ssh_list(app, ui);
 
     ui.add_space(12.0);
     ui.separator();
@@ -297,6 +300,21 @@ fn create_row(app: &mut App, ui: &mut egui::Ui) {
         }
     });
 
+    // SSH signing keys live here too — they are keys you hold, generated and
+    // imported the same way, and used to sign on the Sign screen.
+    ui.add_space(theme::space::SM);
+    ui.horizontal(|ui| {
+        if theme::primary_button_enabled(ui, "Generate SSH · Ed25519", ready).clicked() {
+            generate_ssh(app, SigningKind::Ed25519);
+        }
+        if theme::primary_button_enabled(ui, "Generate SSH · RSA", ready).clicked() {
+            generate_ssh(app, SigningKind::Rsa);
+        }
+        if theme::primary_button_enabled(ui, "Import SSH key…", named).clicked() {
+            import_ssh(app);
+        }
+    });
+
     if !named {
         ui.weak("Give the identity a label first.");
     }
@@ -456,6 +474,176 @@ fn delete_row(app: &mut App, ui: &mut egui::Ui, id: &str, label: &str) {
         }
     } else if cancel {
         app.identities.deleting = None;
+    }
+}
+
+/// The SSH signing keys, listed below the age identities.
+fn ssh_list(app: &mut App, ui: &mut egui::Ui) {
+    let entries = app.signing_store.entries().to_vec();
+    if entries.is_empty() {
+        return;
+    }
+    ui.add_space(12.0);
+    theme::heading(ui, "SSH signing keys");
+    ui.weak("For signing files on the Sign screen. These cannot decrypt.");
+    ui.add_space(8.0);
+
+    for entry in entries {
+        theme::card(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.strong(&entry.label);
+                theme::capsule(ui, entry.kind.label(), theme::ACCENT);
+                if entry.encrypted {
+                    theme::passphrase_badge(ui);
+                }
+            });
+            ui.weak(format!("created {}", entry.created));
+            ui.add(
+                egui::Label::new(egui::RichText::new(&entry.fingerprint).monospace().size(11.0))
+                    .wrap(),
+            );
+            ui.horizontal(|ui| {
+                if theme::secondary_button(ui, "Rename").clicked() {
+                    app.identities.ssh_renaming = Some((entry.id.clone(), entry.label.clone()));
+                }
+                if theme::destructive_button(ui, "Delete…").clicked() {
+                    app.identities.ssh_deleting = Some((entry.id.clone(), String::new()));
+                }
+            });
+            ssh_rename_row(app, ui, &entry.id);
+            ssh_delete_row(app, ui, &entry.id, &entry.label);
+        });
+        ui.add_space(4.0);
+    }
+}
+
+fn ssh_rename_row(app: &mut App, ui: &mut egui::Ui, id: &str) {
+    let Some((renaming_id, _)) = app.identities.ssh_renaming.as_ref() else {
+        return;
+    };
+    if renaming_id != id {
+        return;
+    }
+    let mut commit = false;
+    let mut cancel = false;
+    if let Some((_, text)) = app.identities.ssh_renaming.as_mut() {
+        ui.horizontal(|ui| {
+            ui.label("New label");
+            ui.add(egui::TextEdit::singleline(text).desired_width(200.0));
+            commit = theme::primary_button(ui, "Save").clicked();
+            cancel = theme::secondary_button(ui, "Cancel").clicked();
+        });
+    }
+    if commit {
+        if let Some((id, text)) = app.identities.ssh_renaming.take() {
+            let result = app
+                .signing_store
+                .rename(&id, &text)
+                .map(|()| format!("Renamed to {text}"));
+            app.report(result);
+        }
+    } else if cancel {
+        app.identities.ssh_renaming = None;
+    }
+}
+
+fn ssh_delete_row(app: &mut App, ui: &mut egui::Ui, id: &str, label: &str) {
+    let Some((deleting_id, _)) = app.identities.ssh_deleting.as_ref() else {
+        return;
+    };
+    if deleting_id != id {
+        return;
+    }
+    let mut confirmed = false;
+    let mut cancel = false;
+    if let Some((_, typed)) = app.identities.ssh_deleting.as_mut() {
+        ui.colored_label(
+            theme::DANGER,
+            format!("Deleting {label} removes its private key. You will not be able to sign with it again."),
+        );
+        ui.horizontal(|ui| {
+            ui.label(format!("Type “{label}” to confirm"));
+            ui.add(egui::TextEdit::singleline(typed).desired_width(200.0));
+            confirmed = typed.trim() == label && theme::destructive_button(ui, "Delete").clicked();
+            cancel = theme::secondary_button(ui, "Cancel").clicked();
+        });
+    }
+    if confirmed {
+        if let Some((id, _)) = app.identities.ssh_deleting.take() {
+            let result = app
+                .signing_store
+                .delete(&id)
+                .map(|()| format!("Deleted {label}"));
+            app.report(result);
+        }
+    } else if cancel {
+        app.identities.ssh_deleting = None;
+    }
+}
+
+fn generate_ssh(app: &mut App, kind: SigningKind) {
+    let label = app.identities.label.trim().to_owned();
+    let passphrase = app
+        .identities
+        .protect
+        .then(|| SecretString::from(app.identities.passphrase.clone()));
+
+    // RSA generation takes a moment; ed25519 is instant.
+    let result = app
+        .signing_store
+        .generate(&label, kind, passphrase.as_ref())
+        .map(|e| format!("Generated {} ({})", e.label, e.kind.label()));
+
+    if result.is_ok() {
+        app.identities.label.clear();
+        app.identities.passphrase.clear();
+        app.identities.protect = false;
+    }
+    app.report(result);
+}
+
+fn import_ssh(app: &mut App) {
+    let Some(source) = rfd::FileDialog::new().pick_file() else {
+        return;
+    };
+    let text = match std::fs::read_to_string(&source) {
+        Ok(t) => t,
+        Err(e) => {
+            app.status = Some(format!("Couldn't read the key file: {e}"));
+            return;
+        }
+    };
+
+    let label = app.identities.label.trim().to_owned();
+    let source_pass = (!app.identities.import_passphrase.trim().is_empty())
+        .then(|| SecretString::from(app.identities.import_passphrase.trim().to_owned()));
+    let protect = app
+        .identities
+        .protect
+        .then(|| SecretString::from(app.identities.passphrase.clone()));
+
+    match app
+        .signing_store
+        .import(&label, &text, source_pass.as_ref(), protect.as_ref())
+    {
+        Ok(e) => {
+            app.identities.label.clear();
+            app.identities.passphrase.clear();
+            app.identities.import_passphrase.clear();
+            app.identities.protect = false;
+            app.status = Some(format!("Imported {} ({})", e.label, e.kind.label()));
+        }
+        Err(agepony_core::CoreError::PassphraseRequired) => {
+            // Surface the passphrase field (create_row shows it when non-empty).
+            if app.identities.import_passphrase.is_empty() {
+                app.identities.import_passphrase = " ".to_owned();
+            }
+            app.status = Some(
+                "That key is passphrase protected. Enter its passphrase, then import again."
+                    .to_owned(),
+            );
+        }
+        Err(e) => app.status = Some(e.to_string()),
     }
 }
 

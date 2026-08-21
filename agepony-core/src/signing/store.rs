@@ -25,6 +25,7 @@ use crate::clock;
 use crate::error::{CoreError, Result, io_at};
 use age::secrecy::{ExposeSecret as _, SecretString};
 use serde::{Deserialize, Serialize};
+use ssh_key::private::RsaKeypair;
 use ssh_key::{Algorithm, HashAlg, LineEnding, PrivateKey};
 use std::path::{Path, PathBuf};
 
@@ -155,6 +156,45 @@ impl SigningStore {
     #[must_use]
     pub fn path_for(&self, entry: &SigningEntry) -> PathBuf {
         self.root.join("signing-keys").join(entry.file_name())
+    }
+
+    /// Generate a new SSH signing key and store it.
+    ///
+    /// `Ed25519` is instant; `Rsa` generates a 3072-bit key, which takes a
+    /// moment. Supplying a passphrase protects the stored key with AgePony's own
+    /// passphrase encryption.
+    ///
+    /// # Errors
+    ///
+    /// [`CoreError::Signing`] if key generation fails, or
+    /// [`CoreError::DuplicateLabel`] / an I/O error from storing it.
+    pub fn generate(
+        &mut self,
+        label: &str,
+        kind: SigningKind,
+        passphrase: Option<&SecretString>,
+    ) -> Result<SigningEntry> {
+        let mut rng = rand_core::OsRng;
+        let key = match kind {
+            SigningKind::Ed25519 => PrivateKey::random(&mut rng, Algorithm::Ed25519)
+                .map_err(|e| CoreError::Signing(e.to_string()))?,
+            SigningKind::Rsa => {
+                let kp = RsaKeypair::random(&mut rng, 3072)
+                    .map_err(|e| CoreError::Signing(e.to_string()))?;
+                PrivateKey::from(kp)
+            }
+        };
+
+        let public_line = key
+            .public_key()
+            .to_openssh()
+            .map_err(|e| CoreError::Signing(e.to_string()))?;
+        let fingerprint = key.public_key().fingerprint(HashAlg::Sha256).to_string();
+        let secret = key
+            .to_openssh(LineEnding::LF)
+            .map_err(|e| CoreError::Signing(e.to_string()))?;
+
+        self.insert(label, &public_line, &fingerprint, kind, &secret, passphrase)
     }
 
     /// Import an OpenSSH private key.
@@ -425,6 +465,40 @@ mod tests {
         store.delete(&entry.id).expect("delete");
         assert!(!path.exists(), "key file must be gone");
         assert!(store.entries().is_empty());
+    }
+
+    #[test]
+    fn generate_ed25519_produces_a_key_that_signs() {
+        let root = scratch("gen-ed");
+        let mut store = SigningStore::open(&root).expect("open");
+        let entry = store
+            .generate("Generated ed25519", SigningKind::Ed25519, None)
+            .expect("generate");
+        assert_eq!(entry.kind, SigningKind::Ed25519);
+        assert!(entry.public_line.starts_with("ssh-ed25519 "));
+        let sig = store.sign(&entry.id, b"hi", None).expect("sign");
+        assert!(
+            super::super::verify_detached(sig.as_bytes(), b"hi", super::super::NAMESPACE)
+                .expect("verify")
+                .valid
+        );
+    }
+
+    #[test]
+    fn generate_rsa_produces_a_key_that_signs() {
+        let root = scratch("gen-rsa");
+        let mut store = SigningStore::open(&root).expect("open");
+        let entry = store
+            .generate("Generated rsa", SigningKind::Rsa, None)
+            .expect("generate");
+        assert_eq!(entry.kind, SigningKind::Rsa);
+        // The RSA workaround must handle a freshly generated key too.
+        let sig = store.sign(&entry.id, b"data", None).expect("sign");
+        assert!(
+            super::super::verify_detached(sig.as_bytes(), b"data", super::super::NAMESPACE)
+                .expect("verify")
+                .valid
+        );
     }
 
     #[test]
