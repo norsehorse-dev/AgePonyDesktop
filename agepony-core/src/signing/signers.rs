@@ -68,7 +68,10 @@ impl StoredSigner {
 
     /// One `allowed_signers` entry for this signer, for export.
     #[must_use]
-    pub fn to_allowed_signer(&self, namespace_restricted: bool) -> super::allowed_signers::AllowedSigner {
+    pub fn to_allowed_signer(
+        &self,
+        namespace_restricted: bool,
+    ) -> super::allowed_signers::AllowedSigner {
         super::allowed_signers::AllowedSigner {
             principals: vec![self.name.clone()],
             options: namespace_restricted.then(|| format!("namespaces=\"{}\"", super::NAMESPACE)),
@@ -157,8 +160,9 @@ impl Signers {
         ssh_public_key_line: &str,
         source: SignerSource,
     ) -> Result<StoredSigner> {
-        let signer = super::allowed_signers::make_signer(&[name.to_owned()], ssh_public_key_line, false)
-            .ok_or_else(|| CoreError::InvalidRecipient(ssh_public_key_line.to_owned()))?;
+        let signer =
+            super::allowed_signers::make_signer(&[name.to_owned()], ssh_public_key_line, false)
+                .ok_or_else(|| CoreError::InvalidRecipient(ssh_public_key_line.to_owned()))?;
         self.push_from_allowed(&signer, source)
     }
 
@@ -173,7 +177,8 @@ impl Signers {
         wire: &[u8],
         source: SignerSource,
     ) -> Result<StoredSigner> {
-        let public = ssh_key::PublicKey::from_bytes(wire).map_err(|_| CoreError::InvalidSignature)?;
+        let public =
+            ssh_key::PublicKey::from_bytes(wire).map_err(|_| CoreError::InvalidSignature)?;
         let signer = StoredSigner {
             id: self.next_id(),
             name: name.trim().to_owned(),
@@ -192,7 +197,10 @@ impl Signers {
     pub fn import_allowed_signers(&mut self, text: &str) -> usize {
         let mut added = 0;
         for entry in super::allowed_signers::parse(text) {
-            if self.push_from_allowed(&entry, SignerSource::ImportAllowedSigners).is_ok() {
+            if self
+                .push_from_allowed(&entry, SignerSource::ImportAllowedSigners)
+                .is_ok()
+            {
                 added += 1;
             }
         }
@@ -268,13 +276,14 @@ impl Signers {
 mod tests {
     use super::*;
 
-    const ED_PUB: &str =
-        "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIHPufhC9ET6WoSU5oEErYNpBN4bTw2ZUA4wiyIYIOPlU kevin@agepony";
+    const ED_PUB: &str = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIHPufhC9ET6WoSU5oEErYNpBN4bTw2ZUA4wiyIYIOPlU kevin@agepony";
 
     #[test]
     fn add_paste_and_match_by_wire() {
         let mut s = Signers::default();
-        let added = s.add_from_public_line("kevin", ED_PUB, SignerSource::PasteKey).expect("add");
+        let added = s
+            .add_from_public_line("kevin", ED_PUB, SignerSource::PasteKey)
+            .expect("add");
         assert_eq!(added.name, "kevin");
         assert!(added.fingerprint().unwrap().starts_with("SHA256:"));
         let wire = added.public_wire().unwrap();
@@ -285,15 +294,18 @@ mod tests {
     #[test]
     fn a_key_is_not_added_twice() {
         let mut s = Signers::default();
-        s.add_from_public_line("kevin", ED_PUB, SignerSource::PasteKey).expect("add");
-        s.add_from_public_line("kevin-again", ED_PUB, SignerSource::PasteKey).expect("add");
+        s.add_from_public_line("kevin", ED_PUB, SignerSource::PasteKey)
+            .expect("add");
+        s.add_from_public_line("kevin-again", ED_PUB, SignerSource::PasteKey)
+            .expect("add");
         assert_eq!(s.all().len(), 1, "same key must not duplicate");
     }
 
     #[test]
     fn allowed_signers_round_trips_through_the_store() {
         let mut s = Signers::default();
-        s.add_from_public_line("alice", ED_PUB, SignerSource::PasteKey).expect("add");
+        s.add_from_public_line("alice", ED_PUB, SignerSource::PasteKey)
+            .expect("add");
         let exported = s.export_allowed_signers(true);
         assert!(exported.contains("namespaces=\"agepony\""));
 
@@ -313,7 +325,8 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         let path = dir.join("signers.json");
         let mut s = Signers::default();
-        s.add_from_public_line("kevin", ED_PUB, SignerSource::PasteKey).expect("add");
+        s.add_from_public_line("kevin", ED_PUB, SignerSource::PasteKey)
+            .expect("add");
         s.save(&path).expect("save");
 
         let loaded = Signers::load(&path).expect("load");
@@ -327,7 +340,9 @@ mod tests {
     #[test]
     fn remove_deletes_by_id() {
         let mut s = Signers::default();
-        let a = s.add_from_public_line("kevin", ED_PUB, SignerSource::PasteKey).expect("add");
+        let a = s
+            .add_from_public_line("kevin", ED_PUB, SignerSource::PasteKey)
+            .expect("add");
         assert!(s.remove(&a.id));
         assert!(s.is_empty());
         assert!(!s.remove(&a.id));

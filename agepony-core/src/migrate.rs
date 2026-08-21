@@ -15,7 +15,9 @@ use age::secrecy::SecretString;
 #[must_use]
 pub fn looks_armored(bytes: &[u8]) -> bool {
     const ARMOR_BEGIN: &[u8] = b"-----BEGIN AGE ENCRYPTED FILE-----";
-    let head = bytes.get(..ARMOR_BEGIN.len().min(bytes.len())).unwrap_or_default();
+    let head = bytes
+        .get(..ARMOR_BEGIN.len().min(bytes.len()))
+        .unwrap_or_default();
     head == ARMOR_BEGIN
 }
 

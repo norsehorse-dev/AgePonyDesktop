@@ -499,8 +499,12 @@ fn ssh_list(app: &mut App, ui: &mut egui::Ui) {
             });
             ui.weak(format!("created {}", entry.created));
             ui.add(
-                egui::Label::new(egui::RichText::new(&entry.fingerprint).monospace().size(11.0))
-                    .wrap(),
+                egui::Label::new(
+                    egui::RichText::new(&entry.fingerprint)
+                        .monospace()
+                        .size(11.0),
+                )
+                .wrap(),
             );
             ui.horizontal(|ui| {
                 if theme::secondary_button(ui, "Rename").clicked() {

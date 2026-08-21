@@ -46,10 +46,20 @@ fn gnu_tar_lists_and_extracts_our_archive() {
         .arg(&archive_path)
         .output()
         .unwrap();
-    assert!(listed.status.success(), "tar tf failed: {}", String::from_utf8_lossy(&listed.stderr));
+    assert!(
+        listed.status.success(),
+        "tar tf failed: {}",
+        String::from_utf8_lossy(&listed.stderr)
+    );
     let names = String::from_utf8_lossy(&listed.stdout);
-    assert!(names.contains("one.txt"), "listing missing one.txt: {names}");
-    assert!(names.contains("two.bin"), "listing missing two.bin: {names}");
+    assert!(
+        names.contains("one.txt"),
+        "listing missing one.txt: {names}"
+    );
+    assert!(
+        names.contains("two.bin"),
+        "listing missing two.bin: {names}"
+    );
 
     // tar xf extracts identical bytes.
     let extract_dir = dir.join("out");
@@ -62,8 +72,14 @@ fn gnu_tar_lists_and_extracts_our_archive() {
         .status()
         .unwrap();
     assert!(extracted.success(), "tar xf failed");
-    assert_eq!(std::fs::read(extract_dir.join("one.txt")).unwrap(), b"first file");
-    assert_eq!(std::fs::read(extract_dir.join("two.bin")).unwrap(), vec![42_u8; 1000]);
+    assert_eq!(
+        std::fs::read(extract_dir.join("one.txt")).unwrap(),
+        b"first file"
+    );
+    assert_eq!(
+        std::fs::read(extract_dir.join("two.bin")).unwrap(),
+        vec![42_u8; 1000]
+    );
 
     let _ = std::fs::remove_dir_all(&dir);
 }

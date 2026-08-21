@@ -198,8 +198,7 @@ mod tests {
     use super::*;
 
     // A real ssh-keygen allowed_signers line for the ed25519 fixture key.
-    const ED_PUB: &str =
-        "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIHPufhC9ET6WoSU5oEErYNpBN4bTw2ZUA4wiyIYIOPlU kevin@agepony";
+    const ED_PUB: &str = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIHPufhC9ET6WoSU5oEErYNpBN4bTw2ZUA4wiyIYIOPlU kevin@agepony";
 
     #[test]
     fn a_plain_line_parses() {
@@ -229,9 +228,8 @@ mod tests {
 
     #[test]
     fn parse_serialize_round_trips() {
-        let body = format!(
-            "# a comment\nkevin@agepony {ED_PUB}\nalice namespaces=\"agepony\" {ED_PUB}\n"
-        );
+        let body =
+            format!("# a comment\nkevin@agepony {ED_PUB}\nalice namespaces=\"agepony\" {ED_PUB}\n");
         let parsed = parse(&body);
         assert_eq!(parsed.len(), 2);
         let round = parse(&serialize(&parsed));

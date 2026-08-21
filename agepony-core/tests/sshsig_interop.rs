@@ -24,9 +24,8 @@ fn have_ssh_keygen() -> bool {
     // into an interactive prompt and blocks on stdin — which would hang the
     // test. A PATH lookup has neither the hang nor any side effect.
     std::env::var_os("PATH").is_some_and(|paths| {
-        std::env::split_paths(&paths).any(|dir| {
-            dir.join("ssh-keygen").is_file() || dir.join("ssh-keygen.exe").is_file()
-        })
+        std::env::split_paths(&paths)
+            .any(|dir| dir.join("ssh-keygen").is_file() || dir.join("ssh-keygen.exe").is_file())
     })
 }
 

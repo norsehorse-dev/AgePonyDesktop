@@ -521,16 +521,17 @@ impl App {
             status = Some(format!("Could not load the recipient book: {e}"));
             Book::default()
         });
-        let signing_store =
-            agepony_core::signing::store::SigningStore::open(&config_dir).unwrap_or_else(|e| {
+        let signing_store = agepony_core::signing::store::SigningStore::open(&config_dir)
+            .unwrap_or_else(|e| {
                 status = Some(format!("Could not open the signing-key store: {e}"));
                 agepony_core::signing::store::SigningStore::open(std::path::Path::new("."))
                     .unwrap_or_else(|_| unreachable!())
             });
-        let signers = agepony_core::signing::signers::Signers::load(&signers_path).unwrap_or_else(|e| {
-            status = Some(format!("Could not load the trusted-signers list: {e}"));
-            agepony_core::signing::signers::Signers::default()
-        });
+        let signers =
+            agepony_core::signing::signers::Signers::load(&signers_path).unwrap_or_else(|e| {
+                status = Some(format!("Could not load the trusted-signers list: {e}"));
+                agepony_core::signing::signers::Signers::default()
+            });
 
         let store = Store::open(&config_dir).unwrap_or_else(|e| {
             status = Some(format!("Could not open the identity store: {e}"));
@@ -743,7 +744,8 @@ impl App {
             return;
         }
         // On the Text screen, Escape wipes whatever secret is on show.
-        if self.tab == Tab::Text && (!self.text.input.is_empty() || self.text.output.as_str().is_some())
+        if self.tab == Tab::Text
+            && (!self.text.input.is_empty() || self.text.output.as_str().is_some())
         {
             self.text.clear_secrets();
             return;

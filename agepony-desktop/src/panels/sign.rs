@@ -70,7 +70,13 @@ fn sign_screen(app: &mut App, ui: &mut egui::Ui) {
             .signing_store
             .entries()
             .iter()
-            .map(|e| (e.id.clone(), format!("{} · {}", e.label, e.kind.label()), e.encrypted))
+            .map(|e| {
+                (
+                    e.id.clone(),
+                    format!("{} · {}", e.label, e.kind.label()),
+                    e.encrypted,
+                )
+            })
             .collect();
         if app.sign.sign_key_id.is_none() {
             app.sign.sign_key_id = keys.first().map(|(id, _, _)| id.clone());
@@ -241,7 +247,11 @@ fn run_verify(app: &mut App) {
         Ok(verdict) => {
             let fingerprint = signing::fingerprint(&verdict.signer_wire).ok();
             let trust = if !verdict.valid {
-                Trust::Invalid(verdict.reason.unwrap_or_else(|| "did not verify".to_owned()))
+                Trust::Invalid(
+                    verdict
+                        .reason
+                        .unwrap_or_else(|| "did not verify".to_owned()),
+                )
             } else if let Some(entry) = app
                 .signing_store
                 .entries()

@@ -69,7 +69,11 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
     );
     ui.add_space(theme::space::SM);
 
-    let verb = if app.text.decrypt { "Decrypt" } else { "Encrypt" };
+    let verb = if app.text.decrypt {
+        "Decrypt"
+    } else {
+        "Encrypt"
+    };
     let enabled = !app.text.input.trim().is_empty();
     if theme::primary_button_enabled(ui, verb, enabled).clicked() {
         run(app);

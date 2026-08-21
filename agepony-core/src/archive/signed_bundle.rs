@@ -100,7 +100,12 @@ mod tests {
 
     #[test]
     fn build_then_parse_round_trips() {
-        let bundle = build("report.pdf", b"the payload", "-----BEGIN SSH SIGNATURE-----\n…\n").unwrap();
+        let bundle = build(
+            "report.pdf",
+            b"the payload",
+            "-----BEGIN SSH SIGNATURE-----\n…\n",
+        )
+        .unwrap();
         let parsed = parse(&bundle).expect("is a bundle");
         assert_eq!(parsed.name, "report.pdf");
         assert_eq!(parsed.payload, b"the payload");

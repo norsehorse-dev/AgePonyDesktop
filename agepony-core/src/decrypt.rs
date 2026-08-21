@@ -161,10 +161,7 @@ pub fn decrypt_to_memory(
 ///
 /// [`CoreError::NoIdentities`] for an empty identity set, or
 /// [`CoreError::Decrypt`] for a wrong identity/passphrase or a failed tag.
-pub fn decrypt_bytes(
-    ciphertext: &[u8],
-    with: With<'_>,
-) -> Result<zeroize::Zeroizing<Vec<u8>>> {
+pub fn decrypt_bytes(ciphertext: &[u8], with: With<'_>) -> Result<zeroize::Zeroizing<Vec<u8>>> {
     let armored = ArmoredReader::new(ciphertext);
     let decryptor = age::Decryptor::new(armored)?;
 
@@ -338,8 +335,11 @@ mod tests {
             &mut |_| true,
         )
         .expect("file encrypt");
-        let pt = decrypt_bytes(&fs::read(&file_ct).expect("read ct"), With::Identities(&ids))
-            .expect("in-memory decrypt of file ciphertext");
+        let pt = decrypt_bytes(
+            &fs::read(&file_ct).expect("read ct"),
+            With::Identities(&ids),
+        )
+        .expect("in-memory decrypt of file ciphertext");
         assert_eq!(&pt[..], b"other way");
 
         let _ = fs::remove_dir_all(&dir);

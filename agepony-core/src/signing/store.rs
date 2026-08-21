@@ -217,7 +217,8 @@ impl SigningStore {
         source_passphrase: Option<&SecretString>,
         protect_passphrase: Option<&SecretString>,
     ) -> Result<SigningEntry> {
-        let parsed = PrivateKey::from_openssh(openssh_text).map_err(|_| CoreError::InvalidIdentity)?;
+        let parsed =
+            PrivateKey::from_openssh(openssh_text).map_err(|_| CoreError::InvalidIdentity)?;
 
         let key = if parsed.is_encrypted() {
             let pass = source_passphrase.ok_or(CoreError::PassphraseRequired)?;
@@ -239,7 +240,14 @@ impl SigningStore {
             .to_openssh(LineEnding::LF)
             .map_err(|e| CoreError::Signing(e.to_string()))?;
 
-        self.insert(label, &public_line, &fingerprint, kind, &secret, protect_passphrase)
+        self.insert(
+            label,
+            &public_line,
+            &fingerprint,
+            kind,
+            &secret,
+            protect_passphrase,
+        )
     }
 
     fn insert(
@@ -344,7 +352,8 @@ impl SigningStore {
         passphrase: Option<&SecretString>,
     ) -> Result<String> {
         let entry = self.get(id).ok_or(CoreError::NoSuchIdentity)?;
-        let openssh = crate::identity::load_text_maybe_encrypted(&self.path_for(entry), passphrase)?;
+        let openssh =
+            crate::identity::load_text_maybe_encrypted(&self.path_for(entry), passphrase)?;
         super::sign_detached(&openssh, message, super::NAMESPACE)
     }
 
@@ -394,7 +403,9 @@ mod tests {
     const RSA_KEY: &str = include_str!("../../tests/fixtures/sshsig_rsa_key");
 
     fn scratch(name: &str) -> PathBuf {
-        let d = std::env::temp_dir().join("agepony-signing-store").join(name);
+        let d = std::env::temp_dir()
+            .join("agepony-signing-store")
+            .join(name);
         let _ = std::fs::remove_dir_all(&d);
         d
     }
@@ -403,7 +414,9 @@ mod tests {
     fn import_stores_public_metadata_and_signs() {
         let root = scratch("import-sign");
         let mut store = SigningStore::open(&root).expect("open");
-        let entry = store.import("Laptop SSH", ED_KEY, None, None).expect("import");
+        let entry = store
+            .import("Laptop SSH", ED_KEY, None, None)
+            .expect("import");
         assert_eq!(entry.kind, SigningKind::Ed25519);
         assert!(entry.public_line.starts_with("ssh-ed25519 "));
         assert!(entry.fingerprint.starts_with("SHA256:"));
@@ -424,7 +437,9 @@ mod tests {
     fn rsa_key_imports_and_signs() {
         let root = scratch("rsa");
         let mut store = SigningStore::open(&root).expect("open");
-        let entry = store.import("RSA key", RSA_KEY, None, None).expect("import");
+        let entry = store
+            .import("RSA key", RSA_KEY, None, None)
+            .expect("import");
         assert_eq!(entry.kind, SigningKind::Rsa);
         let sig = store.sign(&entry.id, b"data", None).expect("sign");
         assert!(

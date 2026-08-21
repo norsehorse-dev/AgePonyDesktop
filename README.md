@@ -3,12 +3,12 @@
 Pure Rust. egui/eframe. One binary per platform. Same files, same identities,
 same recipients as AgePony iOS and Android.
 
-**Status:** Phases 1 through 6 complete. Unreleased — see `RELEASING.md`.
+**Status:** 2.0.0. Feature parity with AgePony iOS and Android. See `RELEASING.md`.
 
 ## Getting started
 
 ```
-cargo test --workspace     # 130 tests, including property tests
+cargo test --workspace     # over 200 tests, including property tests
 cargo clippy --workspace --all-targets
 cargo run -p agepony-desktop
 ```
@@ -48,6 +48,9 @@ AgePonyDesktop/
 │   │   ├── porting.rs          receiving an identity from a phone
 │   │   ├── encrypt.rs          streaming, sibling-dotfile output
 │   │   ├── decrypt.rs          streaming, no partial plaintext on failure
+│   │   ├── migrate.rs          re-encrypt existing files to a new recipient
+│   │   ├── signing/            detached SSHSIG, allowed_signers, key + signer stores
+│   │   ├── archive/            compact USTAR and the signed-bundle container
 │   │   └── pq/                 mlkem768x25519: X-Wing KEM + HPKE + Bech32
 │   └── tests/
 │       ├── vectors.rs          shared fixtures + the post-quantum KAT
@@ -65,7 +68,7 @@ AgePonyDesktop/
         ├── mark.rs             the shield and horse as vector meshes
         ├── qr.rs               QR codes for the porting flow
         ├── theme.rs            the design system: palette, fonts, components
-        └── panels/             encrypt, decrypt, identities, recipients
+        └── panels/             files, text, sign, identities, recipients, settings
 ```
 
 ## What works today
@@ -90,6 +93,21 @@ AgePonyDesktop/
 - The NorseHorse design system: brand palette and components ported from iOS,
   Inter and JetBrains Mono embedded, the shield drawn as vector geometry
 - The GUI shell: sidebar, encrypt and decrypt panels, file dialogs, progress bar
+- Encrypt and decrypt pasted text, not just files, from the Text screen. The
+  decrypted text is held in a zeroizing buffer and cleared on leaving the screen
+- Sign and verify files with detached SSHSIG, byte-compatible with `ssh-keygen`
+  and the mobile apps. `ssh-ed25519` and `ssh-rsa` produce signatures; ecdsa and
+  security-key signatures made elsewhere verify here
+- A trusted-signers list that names known keys on a valid signature,
+  round-tripping through the OpenSSH `allowed_signers` format
+- Generate and import SSH signing keys (ed25519 or RSA-3072) on the Identities
+  screen, alongside your age identities
+- Bundle several files into one `.tar.age` archive, in a compact USTAR that
+  standard `tar` tools open
+- Migrate existing age files to a quantum-safe identity in a batch, keeping the
+  originals until the new copy is written
+- A panic wipe in Settings that deletes every identity, signing key, recipient,
+  and trusted signer, and their key files on disk
 
 ## Verbs
 
@@ -178,10 +196,10 @@ other scans string literals for anything rendered but undeclared.
 
 | | |
 |---|---|
-| `⌘1`…`⌘4` | switch tabs |
+| `⌘1`…`⌘6` | switch tabs (Files, Text, Sign, Identities, Recipients, Settings) |
 | `⌘O` | choose files for the current tab |
-| `⌘↩` | run Encrypt or Decrypt |
-| `Esc` | cancel the batch, or back out of whatever is open |
+| `⌘↩` | run the current screen: encrypt or decrypt on Files, encrypt or decrypt text on Text |
+| `Esc` | cancel the batch, clear the Text screen, or back out of whatever is open |
 
 `⌘` is `Ctrl` on Windows and Linux.
 

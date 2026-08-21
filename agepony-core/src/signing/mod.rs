@@ -48,7 +48,8 @@ pub const NAMESPACE: &str = "agepony";
 /// [`CoreError::UnsupportedSigningKey`] for a key type that cannot sign, or
 /// [`CoreError::Signing`] if the signature operation itself fails.
 pub fn sign_detached(openssh_private_key: &str, message: &[u8], namespace: &str) -> Result<String> {
-    let key = PrivateKey::from_openssh(openssh_private_key).map_err(|_| CoreError::InvalidIdentity)?;
+    let key =
+        PrivateKey::from_openssh(openssh_private_key).map_err(|_| CoreError::InvalidIdentity)?;
 
     let sig = match key.algorithm() {
         Algorithm::Ed25519 => SshSig::sign(&key, namespace, HashAlg::Sha512, message)

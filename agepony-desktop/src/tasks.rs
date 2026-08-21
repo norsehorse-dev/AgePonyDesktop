@@ -411,9 +411,7 @@ pub fn spawn(job: Job, repaint: impl Fn() + Send + 'static) -> Running {
                 // the shared passphrase for passphrase-encrypted inputs instead.
                 let mut identities: Vec<Box<dyn age::Identity + Send + Sync>> = Vec::new();
                 for f in &identity_files {
-                    if let Ok(mut v) =
-                        agepony_core::identity::load_file_maybe_encrypted(f, None)
-                    {
+                    if let Ok(mut v) = agepony_core::identity::load_file_maybe_encrypted(f, None) {
                         identities.append(&mut v);
                     }
                 }
@@ -423,15 +421,18 @@ pub fn spawn(job: Job, repaint: impl Fn() + Send + 'static) -> Running {
                         break;
                     }
                     let _ = send(Update::Started(input.clone()));
-                    let result = std::fs::read(input).map_err(|e| e.to_string()).and_then(|bytes| {
-                        agepony_core::migrate::reencrypt(
-                            &bytes,
-                            &identities,
-                            passphrase.as_ref(),
-                            &target,
-                        )
-                        .map_err(|e| e.to_string())
-                    });
+                    let result =
+                        std::fs::read(input)
+                            .map_err(|e| e.to_string())
+                            .and_then(|bytes| {
+                                agepony_core::migrate::reencrypt(
+                                    &bytes,
+                                    &identities,
+                                    passphrase.as_ref(),
+                                    &target,
+                                )
+                                .map_err(|e| e.to_string())
+                            });
                     match result {
                         Ok(out_bytes) => {
                             let name = input.file_name().map_or_else(

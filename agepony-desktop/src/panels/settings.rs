@@ -194,7 +194,11 @@ fn migration_section(app: &mut App, ui: &mut egui::Ui) {
         });
 
         ui.add_space(theme::space::SM);
-        let busy = app.migrate.job.as_ref().is_some_and(tasks::Running::in_flight);
+        let busy = app
+            .migrate
+            .job
+            .as_ref()
+            .is_some_and(tasks::Running::in_flight);
         let can = !busy
             && app.migrate.target_id.is_some()
             && !app.migrate.files.is_empty()

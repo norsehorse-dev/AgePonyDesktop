@@ -189,7 +189,8 @@ fn read_string(buf: &[u8], off: usize, len: usize) -> String {
 }
 
 fn set(buf: &mut [u8; BLOCK], i: usize, b: u8) -> Result<()> {
-    *buf.get_mut(i).ok_or_else(|| tar_err("header index overflow"))? = b;
+    *buf.get_mut(i)
+        .ok_or_else(|| tar_err("header index overflow"))? = b;
     Ok(())
 }
 
