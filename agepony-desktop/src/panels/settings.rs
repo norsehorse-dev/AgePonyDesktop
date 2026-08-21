@@ -343,7 +343,7 @@ const FAMILY: &[PonyApp] = &[
     PonyApp {
         name: "PassPony",
         tagline: "Your pass and passage store, in your pocket.",
-        platforms: "iPhone · macOS · Windows · Linux",
+        platforms: "iPhone",
         url: "https://passpony.app",
         // Best-fit accent; swap for PassPony's own if the family band differs.
         accent: egui::Color32::from_rgb(0xE8, 0xC8, 0x4D),
@@ -366,7 +366,7 @@ const FAMILY: &[PonyApp] = &[
     PonyApp {
         name: "ScrubPony",
         tagline: "Strips identifying metadata out of JPEGs without touching a pixel.",
-        platforms: "macOS · Linux",
+        platforms: "Android · macOS · Linux",
         url: "https://scrubpony.app",
         accent: egui::Color32::from_rgb(0x9D, 0x7C, 0xF5),
     },
@@ -387,7 +387,7 @@ const FAMILY: &[PonyApp] = &[
     PonyApp {
         name: "BurnPony",
         tagline: "Send a secret. Encrypted on your phone, burned after reading.",
-        platforms: "iPhone",
+        platforms: "iPhone · Android",
         url: "https://burnpony.app",
         accent: egui::Color32::from_rgb(0xF6, 0x75, 0x29),
     },
