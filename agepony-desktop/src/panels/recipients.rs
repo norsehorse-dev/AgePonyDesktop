@@ -28,10 +28,51 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
             ui,
             "No recipients yet. Add one above, or import an age recipients file.",
         );
-        return;
+    } else {
+        table(app, ui);
     }
 
-    table(app, ui);
+    recently_deleted(app, ui);
+}
+
+/// The recipient recycle bin, shown as a collapsing section below the list.
+fn recently_deleted(app: &mut App, ui: &mut egui::Ui) {
+    let trashed: Vec<_> = app.book.trashed().to_vec();
+    if trashed.is_empty() {
+        return;
+    }
+    ui.add_space(8.0);
+    egui::CollapsingHeader::new(format!("Recently deleted ({})", trashed.len())).show(ui, |ui| {
+        ui.weak("Removed recipients wait here for 30 days. Restore one, or remove it for good.");
+        ui.add_space(4.0);
+        for t in trashed {
+            theme::card(ui, |ui| {
+                ui.horizontal(|ui| {
+                    theme::avatar(ui, &t.entry.recipient, &t.entry.name);
+                    ui.strong(&t.entry.name);
+                });
+                ui.weak(format!("removed {}", t.deleted_at));
+                ui.horizontal(|ui| {
+                    if theme::secondary_button(ui, "Restore").clicked() {
+                        app.book.restore(&t.entry.name);
+                        app.save_book();
+                        app.status = Some(format!("Restored {}", t.entry.name));
+                    }
+                    if theme::destructive_button(ui, "Delete forever").clicked() {
+                        app.book.purge(&t.entry.name);
+                        app.save_book();
+                        app.status = Some(format!("Removed {} for good", t.entry.name));
+                    }
+                });
+            });
+            ui.add_space(4.0);
+        }
+        if theme::secondary_button(ui, "Empty recycle bin").clicked() {
+            app.book.empty_trash();
+            app.save_book();
+            app.status = Some("Emptied the recycle bin".to_string());
+        }
+    });
 }
 
 fn toolbar(app: &mut App, ui: &mut egui::Ui) {
@@ -149,6 +190,7 @@ fn table(app: &mut App, ui: &mut egui::Ui) {
 
         theme::card(ui, |ui| {
             ui.horizontal(|ui| {
+                theme::avatar(ui, &entry.recipient, &entry.name);
                 ui.strong(&entry.name);
                 if entry.is_own() {
                     theme::capsule(ui, "Yours", theme::ACCENT);
@@ -189,12 +231,12 @@ fn table(app: &mut App, ui: &mut egui::Ui) {
                             "This is your own key. Delete the identity on the Identities tab to remove it.",
                         );
                 } else if theme::destructive_button(ui, "Remove").clicked() {
-                    // No typed confirmation, unlike deleting an identity: this
-                    // destroys a public key that can be pasted back in a
-                    // second, not key material.
-                    app.book.remove(&entry.name);
+                    // Soft-remove: it moves to Recently deleted, restorable for
+                    // 30 days. A public key can be pasted back in a second, but
+                    // a saved name and note are worth not losing to a misclick.
+                    app.book.soft_remove(&entry.name);
                     app.save_book();
-                    app.status = Some(format!("Removed {}", entry.name));
+                    app.status = Some(format!("Moved {} to Recently deleted", entry.name));
                 }
             });
         });

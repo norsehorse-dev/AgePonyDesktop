@@ -85,6 +85,18 @@
         <Media Id='1' Cabinet='media1.cab' EmbedCab='yes' DiskPrompt='CD-ROM #1'/>
         <Property Id='DiskPrompt' Value='agepony-desktop Installation'/>
 
+        <!--
+          Remember where the app was installed, so a major upgrade reuses the
+          same directory instead of forgetting a custom location and reinstalling
+          to the default (which then removes the old one). Issue #2. On a first
+          install there is no key, so APPLICATIONFOLDER keeps its default below.
+          Written by the RememberInstallDir component further down.
+        -->
+        <Property Id='APPLICATIONFOLDER'>
+            <RegistrySearch Id='PriorInstallDir' Root='HKLM'
+                Key='Software\NorseHorse\AgePony' Name='InstallDir' Type='raw'/>
+        </Property>
+
         <Directory Id='TARGETDIR' Name='SourceDir'>
             <Directory Id='$(var.PlatformProgramFilesFolder)' Name='PFiles'>
                 <Directory Id='APPLICATIONFOLDER' Name='AgePony'>
@@ -99,6 +111,15 @@
                         <File Id='LicenseFile'
                             DiskId='1'
                             Source='$(sys.SOURCEFILEDIR)License.rtf'
+                            KeyPath='yes'/>
+                    </Component>
+
+                    <Component Id='RememberInstallDir' Guid='644F2987-75D1-4662-ADA3-41AC06897EB0'>
+                        <RegistryValue Root='HKLM'
+                            Key='Software\NorseHorse\AgePony'
+                            Name='InstallDir'
+                            Type='string'
+                            Value='[APPLICATIONFOLDER]'
                             KeyPath='yes'/>
                     </Component>
                     
@@ -148,6 +169,7 @@
               the license sidecar file from the installer.
             -->
             <ComponentRef Id='License'/>
+            <ComponentRef Id='RememberInstallDir'/>
             
             <ComponentRef Id='binary0'/>
             <ComponentRef Id='binary1'/>

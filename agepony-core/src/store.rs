@@ -81,6 +81,16 @@ impl Entry {
     }
 }
 
+/// A soft-deleted identity, held in the recycle bin. Its `0600` key file is
+/// moved into `<config>/trash/` and restored from there; it is not decrypted.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct Trashed {
+    /// The identity's public metadata.
+    pub entry: Entry,
+    /// RFC 3339 UTC time it was deleted.
+    pub deleted_at: String,
+}
+
 /// The on-disk index.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 struct Index {
@@ -90,11 +100,17 @@ struct Index {
     entries: Vec<Entry>,
     #[serde(default)]
     active: Option<String>,
+    #[serde(default)]
+    trashed: Vec<Trashed>,
 }
 
 const fn one() -> u32 {
     1
 }
+
+/// How long a soft-deleted identity waits in the recycle bin before it is
+/// purged on the next open.
+pub const TRASH_RETENTION_DAYS: u64 = 30;
 
 /// The identity store, rooted at a directory.
 #[derive(Debug, Clone)]
@@ -118,10 +134,12 @@ impl Store {
         } else {
             Index::default()
         };
-        Ok(Self {
+        let mut store = Self {
             root: root.to_path_buf(),
             index,
-        })
+        };
+        let _ = store.purge_expired(TRASH_RETENTION_DAYS);
+        Ok(store)
     }
 
     /// Every entry, newest first.
@@ -359,6 +377,144 @@ impl Store {
         self.save()
     }
 
+    /// Directory that holds soft-deleted key files.
+    fn trash_dir(&self) -> PathBuf {
+        self.root.join("trash")
+    }
+
+    /// Soft-delete: move the key file into the recycle bin and record it.
+    ///
+    /// # Errors
+    ///
+    /// [`CoreError::NoSuchIdentity`] if unknown, or [`CoreError::Io`] on a move
+    /// or index write failure.
+    pub fn soft_delete(&mut self, id: &str) -> Result<()> {
+        let (position, entry) = self
+            .index
+            .entries
+            .iter()
+            .enumerate()
+            .find(|(_, e)| e.id == id)
+            .map(|(i, e)| (i, e.clone()))
+            .ok_or(CoreError::NoSuchIdentity)?;
+
+        let from = self.path_for(&entry);
+        if from.exists() {
+            let dir = self.trash_dir();
+            std::fs::create_dir_all(&dir).map_err(io_at(&dir))?;
+            let to = dir.join(entry.file_name());
+            std::fs::rename(&from, &to).map_err(io_at(&to))?;
+        }
+
+        self.index.entries.remove(position);
+        if self.index.active.as_deref() == Some(id) {
+            self.index.active = self.index.entries.first().map(|e| e.id.clone());
+        }
+        self.index.trashed.insert(
+            0,
+            Trashed {
+                entry,
+                deleted_at: clock::now_rfc3339(),
+            },
+        );
+        self.save()
+    }
+
+    /// The recycle bin, newest first.
+    #[must_use]
+    pub fn trashed(&self) -> &[Trashed] {
+        &self.index.trashed
+    }
+
+    /// Restore a soft-deleted identity, moving its key file back. Returns the
+    /// entry so the caller can re-link its recipient.
+    ///
+    /// # Errors
+    ///
+    /// [`CoreError::NoSuchIdentity`] if it is not in the bin, or
+    /// [`CoreError::Io`] on a move or index write failure.
+    pub fn restore(&mut self, id: &str) -> Result<Entry> {
+        let position = self
+            .index
+            .trashed
+            .iter()
+            .position(|t| t.entry.id == id)
+            .ok_or(CoreError::NoSuchIdentity)?;
+        let entry = self.index.trashed.remove(position).entry;
+
+        let from = self.trash_dir().join(entry.file_name());
+        let to = self.path_for(&entry);
+        if from.exists() {
+            std::fs::rename(&from, &to).map_err(io_at(&to))?;
+        }
+        if self.index.active.is_none() {
+            self.index.active = Some(entry.id.clone());
+        }
+        self.index.entries.insert(0, entry.clone());
+        self.save()?;
+        Ok(entry)
+    }
+
+    /// Permanently remove one identity from the recycle bin, key file and all.
+    ///
+    /// # Errors
+    ///
+    /// [`CoreError::Io`] if the index cannot be written.
+    pub fn purge(&mut self, id: &str) -> Result<()> {
+        if let Some(pos) = self.index.trashed.iter().position(|t| t.entry.id == id) {
+            let trashed = self.index.trashed.remove(pos);
+            let path = self.trash_dir().join(trashed.entry.file_name());
+            if path.exists() {
+                let _ = std::fs::remove_file(&path);
+            }
+            self.save()?;
+        }
+        Ok(())
+    }
+
+    /// Empty the identity recycle bin.
+    ///
+    /// # Errors
+    ///
+    /// [`CoreError::Io`] if the index cannot be written.
+    pub fn empty_trash(&mut self) -> Result<()> {
+        if self.index.trashed.is_empty() {
+            return Ok(());
+        }
+        for t in std::mem::take(&mut self.index.trashed) {
+            let path = self.trash_dir().join(t.entry.file_name());
+            if path.exists() {
+                let _ = std::fs::remove_file(&path);
+            }
+        }
+        self.save()
+    }
+
+    /// Purge trashed identities older than `days`. Called on open.
+    ///
+    /// # Errors
+    ///
+    /// [`CoreError::Io`] if the index cannot be written.
+    pub fn purge_expired(&mut self, days: u64) -> Result<()> {
+        let cutoff = clock::rfc3339_days_ago(days);
+        let (expired, kept): (Vec<Trashed>, Vec<Trashed>) = self
+            .index
+            .trashed
+            .drain(..)
+            .partition(|t| t.deleted_at.as_str() < cutoff.as_str());
+        self.index.trashed = kept;
+        if expired.is_empty() {
+            return Ok(());
+        }
+        for t in expired {
+            let path = self.trash_dir().join(t.entry.file_name());
+            if path.exists() {
+                let _ = std::fs::remove_file(&path);
+            }
+        }
+        self.save()
+    }
+
     /// Copy an identity's file out to `destination`, verbatim.
     ///
     /// An encrypted identity is exported still encrypted; this never decrypts
@@ -407,7 +563,14 @@ impl Store {
                 let _ = std::fs::remove_file(&path);
             }
         }
+        for t in self.index.trashed.clone() {
+            let path = self.trash_dir().join(t.entry.file_name());
+            if path.exists() {
+                let _ = std::fs::remove_file(&path);
+            }
+        }
         self.index.entries.clear();
+        self.index.trashed.clear();
         self.index.active = None;
         self.save()
     }

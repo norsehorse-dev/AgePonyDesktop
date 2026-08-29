@@ -50,6 +50,7 @@ pub fn show_age(app: &mut App, ui: &mut egui::Ui) {
         list(app, ui);
     }
 
+    recently_deleted(app, ui);
     ui.add_space(12.0);
     ui.separator();
     ui.add_space(8.0);
@@ -378,6 +379,7 @@ fn list(app: &mut App, ui: &mut egui::Ui) {
 
         theme::card(ui, |ui| {
             ui.horizontal(|ui| {
+                theme::avatar(ui, &entry.recipient, &entry.label);
                 ui.strong(&entry.label);
                 if entry.kind.is_post_quantum() {
                     theme::pq_badge(ui);
@@ -458,6 +460,63 @@ fn rename_row(app: &mut App, ui: &mut egui::Ui, id: &str) {
     }
 }
 
+/// The identity recycle bin, shown as a collapsing section below the list.
+fn recently_deleted(app: &mut App, ui: &mut egui::Ui) {
+    let trashed: Vec<_> = app.store.trashed().to_vec();
+    if trashed.is_empty() {
+        return;
+    }
+    ui.add_space(12.0);
+    egui::CollapsingHeader::new(format!("Recently deleted ({})", trashed.len())).show(ui, |ui| {
+        ui.weak(
+            "Restoring an identity brings its private key back. Removed for good, it and              anything encrypted only to it cannot be recovered.",
+        );
+        ui.add_space(4.0);
+        for t in trashed {
+            theme::card(ui, |ui| {
+                ui.horizontal(|ui| {
+                    theme::avatar(ui, &t.entry.recipient, &t.entry.label);
+                    ui.strong(&t.entry.label);
+                    if t.entry.kind.is_post_quantum() {
+                        theme::pq_badge(ui);
+                    }
+                });
+                ui.weak(format!("deleted {}", t.deleted_at));
+                ui.horizontal(|ui| {
+                    if theme::secondary_button(ui, "Restore").clicked() {
+                        let r = agepony_core::vault::restore(
+                            &mut app.store,
+                            &mut app.book,
+                            &t.entry.id,
+                        )
+                        .map(|()| format!("Restored {}", t.entry.label));
+                        app.save_book();
+                        app.report(r);
+                    }
+                    if theme::destructive_button(ui, "Delete forever").clicked() {
+                        match app.store.purge(&t.entry.id) {
+                            Ok(()) => {
+                                app.status = Some(format!("Removed {} for good", t.entry.label));
+                            }
+                            Err(e) => {
+                                app.status =
+                                    Some(format!("Could not remove {}: {e}", t.entry.label));
+                            }
+                        }
+                    }
+                });
+            });
+            ui.add_space(4.0);
+        }
+        if theme::secondary_button(ui, "Empty recycle bin").clicked() {
+            match app.store.empty_trash() {
+                Ok(()) => app.status = Some("Emptied the recycle bin".to_string()),
+                Err(e) => app.status = Some(format!("Could not empty the recycle bin: {e}")),
+            }
+        }
+    });
+}
+
 fn delete_row(app: &mut App, ui: &mut egui::Ui, id: &str, label: &str) {
     let Some((deleting_id, _)) = app.identities.deleting.as_ref() else {
         return;
@@ -472,7 +531,7 @@ fn delete_row(app: &mut App, ui: &mut egui::Ui, id: &str, label: &str) {
         ui.colored_label(
             theme::DANGER,
             format!(
-                "Deleting an identity destroys its key material. Anything encrypted only to {label} becomes unreadable, permanently. Its recipient is removed from your book too, so you cannot encrypt to a key you no longer hold."
+                "Deleting moves {label} to Recently deleted, where you can restore it for 30 days. After that, or if you remove it for good, anything encrypted only to it becomes unreadable. Its recipient is dropped from your book until you restore it."
             ),
         );
         ui.horizontal(|ui| {
@@ -485,8 +544,8 @@ fn delete_row(app: &mut App, ui: &mut egui::Ui, id: &str, label: &str) {
 
     if confirmed {
         if let Some((id, _)) = app.identities.deleting.take() {
-            let result = agepony_core::vault::delete(&mut app.store, &mut app.book, &id)
-                .map(|()| format!("Deleted {label}, and removed its recipient"));
+            let result = agepony_core::vault::soft_delete(&mut app.store, &mut app.book, &id)
+                .map(|()| format!("Moved {label} to Recently deleted"));
             app.save_book();
             app.report(result);
         }

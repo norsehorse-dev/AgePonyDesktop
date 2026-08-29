@@ -33,6 +33,16 @@ pub fn from_unix_seconds(secs: u64) -> String {
     format!("{y:04}-{m:02}-{d:02}T{h:02}:{min:02}:{s:02}Z")
 }
 
+/// An RFC 3339 UTC string for `days` before now. RFC 3339 UTC strings sort
+/// chronologically, so a lexicographic compare against this is an age test.
+#[must_use]
+pub fn rfc3339_days_ago(days: u64) -> String {
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs());
+    from_unix_seconds(now.saturating_sub(days.saturating_mul(86_400)))
+}
+
 /// Days since 1970-01-01 to a civil (year, month, day).
 ///
 /// Hinnant's algorithm: shift the epoch to 0000-03-01 so leap days land at the

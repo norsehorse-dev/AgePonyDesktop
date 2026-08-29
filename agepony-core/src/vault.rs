@@ -100,6 +100,32 @@ pub fn delete(store: &mut Store, book: &mut Book, id: &str) -> Result<()> {
     Ok(())
 }
 
+/// Soft-delete an identity into the recycle bin, forgetting its recipient.
+///
+/// The book entry is dropped so a key you no longer hold cannot be encrypted
+/// to; restoring the identity re-links it. The store keeps the key file in the
+/// recycle bin until restore or purge.
+///
+/// # Errors
+///
+/// Whatever [`Store::soft_delete`] returns.
+pub fn soft_delete(store: &mut Store, book: &mut Book, id: &str) -> Result<()> {
+    store.soft_delete(id)?;
+    book.forget_identity(id);
+    Ok(())
+}
+
+/// Restore a soft-deleted identity and re-link its recipient in the book.
+///
+/// # Errors
+///
+/// Whatever [`Store::restore`] or [`Book::upsert_own`] returns.
+pub fn restore(store: &mut Store, book: &mut Book, id: &str) -> Result<()> {
+    let entry = store.restore(id)?;
+    book.upsert_own(&entry.id, &entry.label, &entry.recipient)?;
+    Ok(())
+}
+
 /// What [`reconcile`] had to change.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct Reconciled {

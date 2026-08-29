@@ -380,6 +380,56 @@ fn install_style(ctx: &Context) {
 )]
 pub const GLYPHS: &[char] = &['×', '◆', '⚠', '✓', '…', '⌘', '—', '·', '“', '”', '→'];
 
+/// A small identicon-style avatar: initials on a circle whose color is derived
+/// from the key material, so a renamed key keeps its color and two keys that
+/// share initials still differ. Mirrors the Android KeyAvatar.
+pub fn avatar(ui: &mut Ui, seed: &str, name: &str) {
+    const PALETTE: &[Color32] = &[
+        Color32::from_rgb(0x14, 0xB8, 0xB0),
+        Color32::from_rgb(0x38, 0xCF, 0xE8),
+        Color32::from_rgb(0x0E, 0x7D, 0x7A),
+        Color32::from_rgb(0x6D, 0x5A, 0xE0),
+        Color32::from_rgb(0xC0, 0x46, 0xDC),
+        Color32::from_rgb(0xE0, 0x8A, 0x2A),
+    ];
+    let d = 26.0;
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(d, d), egui::Sense::hover());
+    let color = PALETTE[(avatar_hash(seed) as usize) % PALETTE.len()];
+    let painter = ui.painter();
+    painter.circle_filled(rect.center(), d / 2.0, color);
+    painter.text(
+        rect.center(),
+        egui::Align2::CENTER_CENTER,
+        avatar_initials(name),
+        FontId::proportional(11.0),
+        Color32::WHITE,
+    );
+}
+
+fn avatar_initials(name: &str) -> String {
+    let words: Vec<&str> = name.split_whitespace().collect();
+    match words.as_slice() {
+        [] => "?".to_string(),
+        [one] => one.chars().take(2).collect::<String>().to_uppercase(),
+        [a, b, ..] => format!(
+            "{}{}",
+            a.chars().next().unwrap_or('?'),
+            b.chars().next().unwrap_or('?')
+        )
+        .to_uppercase(),
+    }
+}
+
+/// 32-bit FNV-1a over the seed bytes. Deterministic color pick.
+fn avatar_hash(s: &str) -> u32 {
+    let mut h: u32 = 2_166_136_261;
+    for b in s.as_bytes() {
+        h ^= u32::from(*b);
+        h = h.wrapping_mul(16_777_619);
+    }
+    h
+}
+
 /// Which text colour reads on the current background.
 #[must_use]
 pub fn ink(ui: &Ui) -> Color32 {
@@ -1193,6 +1243,19 @@ fn brand_button(ui: &mut Ui, text: &str, kind: ButtonKind, enabled: bool) -> Res
     }
     let text_pos = rect.center() - galley.size() / 2.0;
     painter.galley(text_pos, galley, ink);
+
+    // Keyboard-focus ring. The button is painted by hand, so egui's own focus
+    // hint never shows; without this a tabbed-to button gives no visual cue
+    // (issue #1). Drawn just outside the edge so it reads even on the filled
+    // primary button.
+    if response.has_focus() {
+        painter.rect_stroke(
+            rect.expand(2.0),
+            CornerRadius::same(R_BUTTON),
+            Stroke::new(2.0, ui.visuals().selection.stroke.color),
+            egui::StrokeKind::Inside,
+        );
+    }
 
     if enabled && response.hovered() {
         ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);

@@ -42,6 +42,25 @@ echo "signing identity: $MACOS_SIGN_IDENTITY"
 # builds for its host and the host is Apple silicon, so Intel Macs are unserved.
 # Rust makes this cheap, so AgePony does it properly.
 echo "==> building both architectures"
+
+# Homebrew's `rust` formula provides cargo and rustc but NOT rustup, and it builds
+# std for the host target only. On that install this script cannot produce a
+# universal binary at all, and rust-toolchain.toml -- which CI honours -- is being
+# silently ignored. Say so, rather than dying on "rustup: command not found".
+command -v rustup >/dev/null || {
+  echo >&2
+  echo "rustup is not on PATH." >&2
+  echo >&2
+  echo "If cargo lives in /opt/homebrew/bin, that is Homebrew's rust formula: no" >&2
+  echo "rustup, host target only, and rust-toolchain.toml ignored. Replace it:" >&2
+  echo >&2
+  echo "  brew uninstall rust" >&2
+  echo "  curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y" >&2
+  echo '  source "$HOME/.cargo/env"' >&2
+  echo >&2
+  exit 1
+}
+
 rustup target add aarch64-apple-darwin x86_64-apple-darwin >/dev/null
 cargo build --release --target aarch64-apple-darwin --bin agepony
 cargo build --release --target x86_64-apple-darwin --bin agepony

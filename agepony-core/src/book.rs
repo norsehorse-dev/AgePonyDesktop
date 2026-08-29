@@ -41,6 +41,16 @@ impl Entry {
     }
 }
 
+/// A soft-deleted recipient, held in the recycle bin until restored, purged,
+/// or aged out. Recipients are public keys, so nothing here is secret.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TrashedRecipient {
+    /// The removed entry.
+    pub entry: Entry,
+    /// RFC 3339 UTC time it was removed.
+    pub deleted_at: String,
+}
+
 /// The book itself.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Book {
@@ -50,11 +60,18 @@ pub struct Book {
     /// The entries.
     #[serde(default)]
     pub entries: Vec<Entry>,
+    /// The recycle bin of removed recipients.
+    #[serde(default)]
+    pub trashed: Vec<TrashedRecipient>,
 }
 
 const fn one() -> u32 {
     1
 }
+
+/// How long a removed recipient waits in the recycle bin before it is purged
+/// on the next load.
+pub const TRASH_RETENTION_DAYS: u64 = 30;
 
 /// How an identity's own entry is labelled in the book.
 ///
@@ -92,10 +109,13 @@ impl Book {
             return Ok(Self {
                 version: 1,
                 entries: Vec::new(),
+                trashed: Vec::new(),
             });
         }
         let text = std::fs::read_to_string(path).map_err(io_at(path))?;
-        Ok(serde_json::from_str(&text)?)
+        let mut book: Self = serde_json::from_str(&text)?;
+        book.purge_expired(TRASH_RETENTION_DAYS);
+        Ok(book)
     }
 
     /// Save the book atomically.
@@ -190,6 +210,70 @@ impl Book {
         let before = self.entries.len();
         self.entries.retain(|e| e.name != name);
         self.entries.len() != before
+    }
+
+    /// Soft-remove a non-own recipient into the recycle bin. Own recipients are
+    /// managed by their identity and are left alone. Returns whether removed.
+    pub fn soft_remove(&mut self, name: &str) -> bool {
+        if let Some(pos) = self
+            .entries
+            .iter()
+            .position(|e| e.name == name && !e.is_own())
+        {
+            let entry = self.entries.remove(pos);
+            self.trashed.insert(
+                0,
+                TrashedRecipient {
+                    entry,
+                    deleted_at: crate::clock::now_rfc3339(),
+                },
+            );
+            true
+        } else {
+            false
+        }
+    }
+
+    /// The recipient recycle bin, newest first.
+    #[must_use]
+    pub fn trashed(&self) -> &[TrashedRecipient] {
+        &self.trashed
+    }
+
+    /// Restore a removed recipient. A name that has since been taken by a live
+    /// entry is given a numbered suffix so nothing clobbers. Returns whether
+    /// anything was restored.
+    pub fn restore(&mut self, name: &str) -> bool {
+        if let Some(pos) = self.trashed.iter().position(|t| t.entry.name == name) {
+            let mut entry = self.trashed.remove(pos).entry;
+            if self.entries.iter().any(|e| e.name == entry.name) {
+                let taken: Vec<&str> = self.entries.iter().map(|e| e.name.as_str()).collect();
+                entry.name = unique_among(&entry.name, &taken);
+            }
+            self.entries.push(entry);
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Permanently remove one recipient from the recycle bin.
+    pub fn purge(&mut self, name: &str) -> bool {
+        let before = self.trashed.len();
+        self.trashed.retain(|t| t.entry.name != name);
+        self.trashed.len() != before
+    }
+
+    /// Empty the recipient recycle bin.
+    pub fn empty_trash(&mut self) {
+        self.trashed.clear();
+    }
+
+    /// Drop trashed recipients older than `days`.
+    pub fn purge_expired(&mut self, days: u64) {
+        let cutoff = crate::clock::rfc3339_days_ago(days);
+        self.trashed
+            .retain(|t| t.deleted_at.as_str() >= cutoff.as_str());
     }
 
     /// Import recipients from an age recipients file.
@@ -362,6 +446,7 @@ mod tests {
     use super::*;
 
     fn sample() -> Book {
+        // (trashed defaults to empty via Default in the literals below)
         Book {
             version: 1,
             entries: vec![
@@ -380,6 +465,7 @@ mod tests {
                     identity_id: None,
                 },
             ],
+            trashed: Vec::new(),
         }
     }
 

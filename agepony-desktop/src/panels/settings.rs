@@ -91,6 +91,15 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         ui.weak("Apache-2.0.");
     });
 
+    // ---- help ------------------------------------------------------------
+    help_section(ui);
+
+    // ---- security --------------------------------------------------------
+    security_section(ui);
+
+    // ---- licenses --------------------------------------------------------
+    licenses_section(ui);
+
     // ---- panic wipe ------------------------------------------------------
     panic_wipe_section(app, ui);
 
@@ -115,6 +124,159 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
             "Links open in your browser. The app itself never makes a network \
              request — these are addresses, not connections.",
         );
+    });
+}
+
+/// Plain-language FAQ, the desktop counterpart of the Android Help screen.
+fn help_section(ui: &mut egui::Ui) {
+    const FAQ: &[(&str, &str)] = &[
+        (
+            "What is age, and what is AgePony?",
+            "age is a modern, open file-encryption format: small, audited, and free of \
+             the legacy baggage of older tools. AgePony Desktop is an age app for your \
+             computer. Files it writes are ordinary age files that the age CLI, rage, and \
+             AgePony on iOS and Android all open.",
+        ),
+        (
+            "What is a recipient?",
+            "A recipient is someone you encrypt to, named by their public key (an age1... \
+             string or an SSH public key). Save a recipient once and you can encrypt to \
+             them any time. You never need their private key, only the public one they share.",
+        ),
+        (
+            "Passphrase or key: which should I use?",
+            "A key (an identity) is best when you encrypt to yourself or to people you \
+             exchange keys with: nothing to remember. A passphrase is best for a one-off \
+             file you hand to someone who does not use age. They only need the word.",
+        ),
+        (
+            "What does armor do?",
+            "Armor writes the encrypted file as plain text you can paste into a message, \
+             instead of raw bytes. It is a little larger. Leave it off for files you send \
+             as attachments.",
+        ),
+        (
+            "I encrypted several files at once. Where did they go?",
+            "Encrypting more than one file packs them into a single archive so it travels \
+             as one file. Decrypting it offers to extract the files back into a folder. A \
+             single file encrypts and decrypts on its own.",
+        ),
+        (
+            "Can these files be opened without AgePony?",
+            "Yes. AgePony writes standard age files, so the age CLI, rage, and other age \
+             tools open them with the matching key or passphrase. You are not locked in.",
+        ),
+        (
+            "What happens if I delete an identity?",
+            "An identity holds a private key. Deleting it moves it to Recently deleted for \
+             a while so you can restore it, but once it is gone for good it cannot be \
+             recovered, and neither can the files encrypted to it. Export a copy you keep \
+             somewhere safe if it matters.",
+        ),
+        (
+            "What is a post-quantum identity?",
+            "It is a hybrid identity combining classic X25519 with ML-KEM, designed to \
+             resist future quantum computers, and still interoperable with age tools that \
+             support the hybrid recipient.",
+        ),
+    ];
+    theme::card(ui, |ui| {
+        theme::section(ui, "Help");
+        ui.add_space(theme::space::SM);
+        ui.weak("Short answers to the things people ask most.");
+        ui.add_space(theme::space::SM);
+        for (q, a) in FAQ {
+            egui::CollapsingHeader::new(*q).show(ui, |ui| {
+                ui.weak(*a);
+            });
+        }
+    });
+}
+
+/// A consolidated account of what the app protects and what it does not do.
+fn security_section(ui: &mut egui::Ui) {
+    const BLOCKS: &[(&str, &str)] = &[
+        (
+            "Everything stays on this computer",
+            "AgePony makes no network requests at all. Encryption, decryption, and your \
+             keys never leave the machine. The links on this screen open your browser; the \
+             app itself never connects.",
+        ),
+        (
+            "The age format and its algorithms",
+            "Recipients use X25519, the payload uses ChaCha20-Poly1305, and a passphrase \
+             uses scrypt. Post-quantum identities add ML-KEM to the key exchange. These are \
+             the same choices the age CLI makes.",
+        ),
+        (
+            "Your keys at rest",
+            "Identity files live in your config folder, written readable by you alone. You \
+             can protect an identity with a passphrase so the file itself is encrypted.",
+        ),
+        (
+            "The panic wipe",
+            "Settings has a guarded wipe that removes every identity and its key file at \
+             once, for the moment you need the app to come up empty.",
+        ),
+    ];
+    const NOT_DOING: &[&str] = &[
+        "It does not back your keys up anywhere. Back up your config folder, or the keys live only on this machine.",
+        "It cannot recover a private key you have deleted for good.",
+        "It sends no analytics or telemetry, ever.",
+        "It cannot protect files after they leave AgePony, or defend a computer already compromised at the system level.",
+    ];
+    theme::card(ui, |ui| {
+        theme::section(ui, "How AgePony protects your files");
+        ui.add_space(theme::space::SM);
+        for (title, body) in BLOCKS {
+            ui.label(
+                egui::RichText::new(*title)
+                    .font(theme::semibold(14.0))
+                    .color(theme::ink(ui)),
+            );
+            ui.add_space(theme::space::TIGHT);
+            ui.weak(*body);
+            ui.add_space(theme::space::SM);
+        }
+        ui.label(
+            egui::RichText::new("What AgePony does not do")
+                .font(theme::semibold(14.0))
+                .color(theme::ink(ui)),
+        );
+        ui.add_space(theme::space::TIGHT);
+        for line in NOT_DOING {
+            ui.weak(format!("\u{2022}  {line}"));
+        }
+    });
+}
+
+/// Third-party notices for the crates the app builds on.
+fn licenses_section(ui: &mut egui::Ui) {
+    const CRATES: &[(&str, &str)] = &[
+        ("age, zeroize (the age implementation)", "MIT or Apache-2.0"),
+        ("egui, eframe (the user interface)", "MIT or Apache-2.0"),
+        ("serde, serde_json", "MIT or Apache-2.0"),
+        ("qrcode", "MIT or Apache-2.0"),
+        ("rfd, directories, anyhow", "MIT or Apache-2.0"),
+    ];
+    theme::card(ui, |ui| {
+        theme::section(ui, "Open-source licenses");
+        ui.add_space(theme::space::SM);
+        ui.weak(
+            "AgePony Desktop is open source under Apache-2.0 (see the bundled NOTICE), and \
+             builds on these crates, each under its own license. Full license texts are \
+             available from every project.",
+        );
+        ui.add_space(theme::space::SM);
+        for (name, license) in CRATES {
+            ui.label(
+                egui::RichText::new(*name)
+                    .font(theme::semibold(13.0))
+                    .color(theme::ink(ui)),
+            );
+            ui.weak(*license);
+            ui.add_space(theme::space::TIGHT);
+        }
     });
 }
 
