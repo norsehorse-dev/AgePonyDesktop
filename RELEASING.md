@@ -200,7 +200,98 @@ a README or used by anyone scripting an install — resolve to whichever release
 flag, not to the newest tag. Published without it, those links point at the previous version
 silently and indefinitely; on a first release, at nothing.
 
-## 5. Verification checklist
+## 5. Mirror to agepony.com — the Tor and I2P channel
+
+The GitHub release is not the only download channel. `agepony.com` self-hosts every
+artifact under `public/downloads/`, and that self-hosted copy is what Tor and I2P users
+pull: they browse the hidden-service mirror of the same site and download from it, because
+GitHub over Tor is slow and frequently blocked. The clearnet site and the hidden services
+share one docroot, so a single deploy serves all three.
+
+The download page (`public/desktop.php`) reads the version, the notes, and the per-artifact
+SHA-256 hashes from `public/downloads/desktop.json`. Nothing on the page is hardcoded per
+release, so the manifest is the one file that has to be right.
+
+The site lives in the PonyHTML repo. Layout under `public/downloads/`:
+
+```
+desktop.json
+norsehorse-release-key.asc
+latest/
+v1.0.0/
+v2.0.0/
+```
+
+Each `vX.Y.Z/` holds the eight artifacts, their eight `.asc`, `SHA256SUMS` and
+`SHA256SUMS.asc` — the same eighteen files the GitHub release carries. `latest/` is a copy
+of the current version's files, for the versionless `downloads/latest/...` URLs.
+
+### Stage the release into the site
+
+Working from the release directory assembled in section 4. Point `SITE` at your PonyHTML
+checkout's `public/downloads`.
+
+```
+SITE="$HOME/Apps/PonyHTML/agepony/public/downloads"
+mkdir -p "$SITE/v2.0.0"
+cp ~/agepony-release/* "$SITE/v2.0.0/"
+cp "$SITE/v2.0.0"/* "$SITE/latest/"
+ls "$SITE/v2.0.0" | wc -l
+```
+
+That prints `18`. Filenames are identical across versions, so copying over `latest/` leaves
+nothing stale.
+
+### Update the manifest
+
+Edit `desktop.json`: set `current.version`, `released`, `tag` and `dir`; replace every
+`sha256` from the `SHA256SUMS` you just copied; write the notes; and move the outgoing
+`current` object into the `previous` array so the old version stays listed. Validate before
+deploying.
+
+```
+python3 -c "import json;json.load(open('$SITE/desktop.json'))" && echo ok
+```
+
+### Deploy
+
+`/var/www` needs root, so stage to your home on the host and place with sudo. `apps` is the
+web host alias.
+
+```
+ssh apps 'mkdir -p ~/agepony-deploy'
+scp -r "$SITE/v2.0.0" "$SITE/desktop.json" apps:~/agepony-deploy/
+ssh apps 'sudo mkdir -p /var/www/agepony/public/downloads/v2.0.0 /var/www/agepony/public/downloads/latest && sudo cp ~/agepony-deploy/v2.0.0/* /var/www/agepony/public/downloads/v2.0.0/ && sudo cp ~/agepony-deploy/v2.0.0/* /var/www/agepony/public/downloads/latest/ && sudo cp ~/agepony-deploy/desktop.json /var/www/agepony/public/downloads/desktop.json && sudo chmod -R a+rX /var/www/agepony/public/downloads && rm -rf ~/agepony-deploy'
+```
+
+Only `v2.0.0` and the manifest cross the wire; `latest/` is filled from them on the host, so
+the artifacts upload once, not twice. The older `vX.Y.Z/` directories are already on the host
+and are left alone.
+
+### Confirm it is live
+
+```
+curl -s https://agepony.com/downloads/desktop.json | grep -m1 version
+curl -sI https://agepony.com/downloads/latest/AgePony-macOS.dmg | head -1
+curl -s https://agepony.com/downloads/latest/SHA256SUMS | head -1
+```
+
+The version reads the new release, the dmg returns `200`, and the SHA line matches the dmg's
+entry in `SHA256SUMS`. The `.onion` and `.i2p` addresses (see `public/mirrors.php`) serve the
+same bytes off the same docroot, so there is nothing separate to push for them.
+
+Gotchas:
+
+- **The manifest is the whole page.** A stale hash there shows a checksum that will not match
+  the download, which a careful user reports as tampering. Copy the hashes from `SHA256SUMS`;
+  do not retype them.
+- **`latest/` must be overwritten every release.** Its filenames are identical across
+  versions, so if it is not refreshed it silently serves the previous binaries under the
+  versionless URLs.
+- **Ownership on the host is your web user.** `chmod a+rX` keeps the files world-readable
+  whatever owns them; if your server expects a specific owner, add a `chown`.
+
+## 6. Verification checklist
 
 Artifacts:
 
@@ -240,13 +331,13 @@ Every OS:
 - [ ] a file encrypted on AgePony iOS or Android opens here, and one encrypted here opens there
 - [ ] the GUI opens in both light and dark mode and nothing is clipped
 
-## 6. Not set up yet — known gaps
+## 7. Not set up yet — known gaps
 
 Listed so they are decisions rather than oversights:
 
-- **The site.** `agepony.com` has no `/desktop` page. PGPony's reads a manifest of per-artifact
-  hashes and shows holding text until they are all present, so the page stays honest if you stop
-  halfway. Until AgePony has one, the GitHub release is the only download channel.
+- **The download-page body copy.** `desktop.php` reads the version, notes and hashes from the
+  manifest, so those update themselves (section 5), but any feature copy written into the page
+  body is hand-maintained and does not. Check it still describes the current feature set.
 - **winget.** No manifest. Note for whenever this starts: `ProductCode` is **not** the `UpgradeCode`
   in `wix/main.wxs` — different GUIDs, and confusing them bit PGPony's manifest.
 - **AUR.** No `agepony-bin` PKGBUILD. It would need to be pushed **after** the release is published,
