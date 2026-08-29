@@ -734,12 +734,11 @@ impl App {
             self.choose_files();
         }
 
-        if ctx.input_mut(|i| i.consume_key(Modifiers::COMMAND, Key::Enter)) {
-            if self.tab == Tab::Age {
-                match self.age_tab {
-                    AgeTab::Files => crate::panels::files::run_all(self, ctx.clone()),
-                    AgeTab::Text => crate::panels::text::run(self),
-                }
+        if ctx.input_mut(|i| i.consume_key(Modifiers::COMMAND, Key::Enter)) && self.tab == Tab::Age
+        {
+            match self.age_tab {
+                AgeTab::Files => crate::panels::files::run_all(self, ctx.clone()),
+                AgeTab::Text => crate::panels::text::run(self),
             }
         }
 
