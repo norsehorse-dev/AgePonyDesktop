@@ -325,6 +325,9 @@ pub struct SignState {
     pub sign_files: Vec<PathBuf>,
     /// Passphrase for a protected signing key.
     pub sign_passphrase: String,
+    /// Namespace to sign under. Defaults to the legacy `agepony` (set lazily in
+    /// the panel); a user can change it for `ssh-keygen` interop (issue #3).
+    pub sign_namespace: String,
 
     // ---- verify ---------------------------------------------------------
     /// The file being verified.
@@ -335,6 +338,9 @@ pub struct SignState {
     pub verify_result: Option<VerifyOutcome>,
     /// The name typed to trust an unknown-but-valid signer.
     pub trust_name: String,
+    /// An extra namespace to accept when verifying, on top of AgePony's own
+    /// accepted set. Empty means accept only the built-ins (issue #3).
+    pub verify_namespace: String,
 
     // ---- signers form ---------------------------------------------------
     /// Name for a trusted signer being pasted.

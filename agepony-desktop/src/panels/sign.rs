@@ -118,6 +118,21 @@ fn sign_screen(app: &mut App, ui: &mut egui::Ui) {
         }
 
         ui.add_space(theme::space::SM);
+        theme::section(ui, "Namespace");
+        if app.sign.sign_namespace.is_empty() {
+            app.sign.sign_namespace = signing::NAMESPACE.to_owned();
+        }
+        ui.add(
+            egui::TextEdit::singleline(&mut app.sign.sign_namespace)
+                .hint_text(signing::NAMESPACE)
+                .desired_width(280.0),
+        );
+        ui.weak(
+            "Advanced. Leave as agepony for AgePony-to-AgePony signatures; change it \
+             only to match another tool's ssh-keygen namespace.",
+        );
+
+        ui.add_space(theme::space::SM);
         let enabled = app.sign.sign_key_id.is_some() && !app.sign.sign_files.is_empty();
         if theme::primary_button_enabled(ui, "Sign", enabled).clicked() {
             run = true;
@@ -136,6 +151,14 @@ fn run_sign(app: &mut App) {
     let passphrase = (!app.sign.sign_passphrase.is_empty())
         .then(|| age::secrecy::SecretString::from(app.sign.sign_passphrase.clone()));
     let files = app.sign.sign_files.clone();
+    let namespace = {
+        let n = app.sign.sign_namespace.trim();
+        if n.is_empty() {
+            signing::NAMESPACE.to_owned()
+        } else {
+            n.to_owned()
+        }
+    };
 
     let mut ok = 0;
     let mut failed = 0;
@@ -149,7 +172,10 @@ fn run_sign(app: &mut App) {
                 continue;
             }
         };
-        match app.signing_store.sign(&id, &message, passphrase.as_ref()) {
+        match app
+            .signing_store
+            .sign_with_namespace(&id, &message, &namespace, passphrase.as_ref())
+        {
             Ok(armored) => {
                 let mut out = path.clone().into_os_string();
                 out.push(".sig");
@@ -209,6 +235,17 @@ fn verify_screen(app: &mut App, ui: &mut egui::Ui) {
             }
         });
 
+        theme::section(ui, "Namespace");
+        ui.add(
+            egui::TextEdit::singleline(&mut app.sign.verify_namespace)
+                .hint_text("optional: an extra namespace to accept")
+                .desired_width(280.0),
+        );
+        ui.weak(
+            "AgePony's own namespaces are always accepted. Add one here to verify a \
+             signature made under a different ssh-keygen namespace.",
+        );
+
         ui.add_space(theme::space::SM);
         let enabled = app.sign.verify_file.is_some() && app.sign.verify_sig.is_some();
         if theme::primary_button_enabled(ui, "Verify", enabled).clicked() {
@@ -243,7 +280,14 @@ fn run_verify(app: &mut App) {
         }
     };
 
-    match signing::verify_detached(&sig, &message, signing::NAMESPACE) {
+    let extra = app.sign.verify_namespace.trim().to_owned();
+    let mut namespaces: Vec<&str> = Vec::new();
+    if !extra.is_empty() {
+        namespaces.push(extra.as_str());
+    }
+    namespaces.extend_from_slice(signing::ACCEPTED_NAMESPACES);
+
+    match signing::verify_detached_any(&sig, &message, &namespaces) {
         Ok(verdict) => {
             let fingerprint = signing::fingerprint(&verdict.signer_wire).ok();
             let trust = if !verdict.valid {

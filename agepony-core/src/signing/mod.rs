@@ -36,6 +36,22 @@ pub mod store;
 /// The SSHSIG namespace AgePony signs and verifies under.
 pub const NAMESPACE: &str = "agepony";
 
+/// The domain-qualified namespace AgePony is moving to, following the
+/// `ssh-keygen` recommendation to namespace custom uses as `NAME@DOMAIN`
+/// (issue #3). Accepted on verify already; signing still uses [`NAMESPACE`] so
+/// signatures keep verifying in un-updated AgePony family apps. Flip the
+/// signing default only once Android and iOS also accept both.
+//
+// TODO(#3): choose the final value before Desktop signs under it. Candidates:
+// "agepony@agepony.com" (product domain, matches the open-source.php example)
+// or "agepony@pony.norsehor.se" (family domain). Provisional until then.
+pub const NAMESPACE_QUALIFIED: &str = "agepony@agepony.com";
+
+/// The namespaces AgePony accepts when verifying, newest first. Signing uses
+/// only [`NAMESPACE`]; verification tries these plus any caller-supplied name
+/// (see [`verify_detached_any`]).
+pub const ACCEPTED_NAMESPACES: &[&str] = &[NAMESPACE_QUALIFIED, NAMESPACE];
+
 /// Sign `message` with an OpenSSH private key, returning an armored SSHSIG.
 ///
 /// `openssh_private_key` is the text of an OpenSSH private key file
@@ -121,6 +137,34 @@ pub fn verify_detached(signature: &[u8], message: &[u8], namespace: &str) -> Res
             namespace: env_namespace,
             reason: Some(e.to_string()),
         }),
+    }
+}
+
+/// Verify a detached SSHSIG accepting any of `namespaces`, tried in order.
+///
+/// Returns the first namespace under which the signature verifies. If none do,
+/// returns the verdict from the last namespace tried, so the caller still sees
+/// a real reason (a namespace mismatch, or a bad signature). With an empty
+/// `namespaces`, falls back to [`NAMESPACE`].
+///
+/// A structurally malformed blob returns [`CoreError::InvalidSignature`], the
+/// same as [`verify_detached`].
+pub fn verify_detached_any(
+    signature: &[u8],
+    message: &[u8],
+    namespaces: &[&str],
+) -> Result<Verdict> {
+    let mut last = None;
+    for &namespace in namespaces {
+        let verdict = verify_detached(signature, message, namespace)?;
+        if verdict.valid {
+            return Ok(verdict);
+        }
+        last = Some(verdict);
+    }
+    match last {
+        Some(verdict) => Ok(verdict),
+        None => verify_detached(signature, message, NAMESPACE),
     }
 }
 
@@ -287,5 +331,40 @@ mod tests {
         assert!(fp.starts_with("SHA256:"));
         // ssh-keygen prints unpadded base64, so no '=' padding.
         assert!(!fp.contains('='));
+    }
+
+    #[test]
+    fn verify_any_accepts_both_the_legacy_and_qualified_namespaces() {
+        let legacy = sign_detached(ED_KEY, MSG, NAMESPACE).expect("sign");
+        let qualified = sign_detached(ED_KEY, MSG, NAMESPACE_QUALIFIED).expect("sign");
+        assert!(
+            verify_detached_any(legacy.as_bytes(), MSG, ACCEPTED_NAMESPACES)
+                .expect("verify")
+                .valid
+        );
+        assert!(
+            verify_detached_any(qualified.as_bytes(), MSG, ACCEPTED_NAMESPACES)
+                .expect("verify")
+                .valid
+        );
+    }
+
+    #[test]
+    fn verify_any_reports_invalid_for_a_foreign_namespace() {
+        let foreign = sign_detached(ED_KEY, MSG, "someone@example.org").expect("sign");
+        let v = verify_detached_any(foreign.as_bytes(), MSG, ACCEPTED_NAMESPACES).expect("verify");
+        assert!(!v.valid);
+        assert!(v.reason.is_some());
+    }
+
+    #[test]
+    fn verify_any_accepts_a_caller_supplied_namespace() {
+        let sig = sign_detached(ED_KEY, MSG, "custom@example.com").expect("sign");
+        let namespaces = ["custom@example.com", NAMESPACE];
+        assert!(
+            verify_detached_any(sig.as_bytes(), MSG, &namespaces)
+                .expect("verify")
+                .valid
+        );
     }
 }

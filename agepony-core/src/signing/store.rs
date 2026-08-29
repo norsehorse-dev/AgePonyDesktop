@@ -351,10 +351,25 @@ impl SigningStore {
         message: &[u8],
         passphrase: Option<&SecretString>,
     ) -> Result<String> {
+        self.sign_with_namespace(id, message, super::NAMESPACE, passphrase)
+    }
+
+    /// Like [`sign`](Self::sign), but signs under an explicit `namespace`
+    /// instead of the default [`NAMESPACE`](super::NAMESPACE). Backs the UI
+    /// namespace field, so a user can sign under an arbitrary `ssh-keygen`
+    /// namespace for interop (issue #3). Signing under the AgePony default
+    /// keeps cross-app verification working.
+    pub fn sign_with_namespace(
+        &self,
+        id: &str,
+        message: &[u8],
+        namespace: &str,
+        passphrase: Option<&SecretString>,
+    ) -> Result<String> {
         let entry = self.get(id).ok_or(CoreError::NoSuchIdentity)?;
         let openssh =
             crate::identity::load_text_maybe_encrypted(&self.path_for(entry), passphrase)?;
-        super::sign_detached(&openssh, message, super::NAMESPACE)
+        super::sign_detached(&openssh, message, namespace)
     }
 
     /// Delete every signing key and its key material — part of the panic wipe.
