@@ -3,7 +3,7 @@
 Pure Rust. egui/eframe. One binary per platform. Same files, same identities,
 same recipients as AgePony iOS and Android.
 
-**Status:** 2.0.0. Feature parity with AgePony iOS and Android. See `RELEASING.md`.
+**Status:** 2.1.0. Feature parity with AgePony iOS and Android. See `RELEASING.md`.
 
 ## Getting started
 
