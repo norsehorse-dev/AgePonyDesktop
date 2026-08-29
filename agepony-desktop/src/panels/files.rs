@@ -1,16 +1,15 @@
-//! The Files screen: one destination for sealing and opening.
+//! The Files screens: Encrypt (sealing) and Decrypt (opening), the AGE rail's
+//! file destinations (issue #5).
 //!
-//! Encrypt and Decrypt used to be separate tabs, which forced a decision — pick
-//! a mode — before the app had been told anything. But the app can *read* what
-//! a file is: [`agepony_core::decrypt::looks_like_age_file`] checks the header,
-//! binary or armored, so a drop is grouped by fact rather than by mode or by
-//! filename. An age file someone renamed still opens; a text file someone
-//! called `notes.age` gets sealed rather than fed to the decryptor.
-//!
-//! A mixed drop shows both groups on one screen, each with its own options and
-//! its own worker, and "Run all" runs whichever have work. One bad file fails
-//! its own row; results are folded back into the rows when a job finishes, so
-//! running again only touches what is still unsettled.
+//! A file is still grouped by fact, not by the tab it was added under:
+//! [`agepony_core::decrypt::looks_like_age_file`] checks the header, binary or
+//! armored, so an age file someone renamed still opens and a text file someone
+//! called `notes.age` gets sealed. What the Encrypt/Decrypt split changed is
+//! only the display: Encrypt shows the seal group, Decrypt shows the open
+//! group, and each names how many files are waiting under the other so a mixed
+//! drop is never lost. Each group keeps its own options and its own worker;
+//! "Run all" runs that group's unsettled rows, and one bad file fails its own
+//! row.
 
 use crate::app::{App, DecryptSource, FileAction, QueuedFile};
 use crate::{tasks, theme};
@@ -42,39 +41,50 @@ pub fn add_paths(app: &mut App, paths: Vec<PathBuf>) -> usize {
     added
 }
 
-/// Draw the screen.
-pub fn show(app: &mut App, ui: &mut egui::Ui) {
-    let seal_count = count(app, FileAction::Seal);
-    let open_count = count(app, FileAction::Open);
+/// Encrypt destination: the files queued for sealing.
+pub fn show_seal(app: &mut App, ui: &mut egui::Ui) {
+    show_mode(app, ui, FileAction::Seal);
+}
 
-    let subtitle = if app.files.queue.is_empty() {
-        "Drop anything in. AgePony reads each file to decide whether it is \
-         sealing or opening — the name is not trusted."
-            .to_owned()
+/// Decrypt destination: the files queued for opening.
+pub fn show_open(app: &mut App, ui: &mut egui::Ui) {
+    show_mode(app, ui, FileAction::Open);
+}
+
+/// Draw one mode's screen: its queued rows, options and worker.
+fn show_mode(app: &mut App, ui: &mut egui::Ui, action: FileAction) {
+    let sealing = action == FileAction::Seal;
+    let n = count(app, action);
+    let other = if sealing {
+        FileAction::Open
     } else {
-        let mut parts = Vec::new();
-        if seal_count > 0 {
-            parts.push(format!("{seal_count} to seal"));
+        FileAction::Seal
+    };
+    let other_n = count(app, other);
+
+    let subtitle = if n == 0 {
+        if sealing {
+            "Choose files to seal to recipients or a passphrase. AgePony reads \
+             each file, so an age file picked here is routed to Decrypt instead."
+                .to_owned()
+        } else {
+            "Choose age files to open with an identity or a passphrase. A file \
+             that is not an age file is routed to Encrypt instead."
+                .to_owned()
         }
-        if open_count > 0 {
-            parts.push(format!("{open_count} to open"));
-        }
-        format!(
-            "{} file{} queued: {}.",
-            app.files.queue.len(),
-            if app.files.queue.len() == 1 { "" } else { "s" },
-            parts.join(", ")
-        )
+    } else {
+        format!("{n} file{} queued.", if n == 1 { "" } else { "s" })
     };
 
-    let busy = app.files.busy();
-    let runnable = unsettled(app, FileAction::Seal) > 0 || unsettled(app, FileAction::Open) > 0;
+    let busy = current_job(app, action).is_some_and(tasks::Running::in_flight);
+    let runnable = unsettled(app, action) > 0;
     let mut want_run = false;
     let mut want_cancel = false;
     let mut want_clear = false;
     let mut want_choose = false;
 
-    theme::screen_head(ui, "Files", &subtitle, |ui| {
+    let title = if sealing { "Encrypt" } else { "Decrypt" };
+    theme::screen_head(ui, title, &subtitle, |ui| {
         if busy {
             if theme::secondary_button(ui, "Cancel").clicked() {
                 want_cancel = true;
@@ -83,7 +93,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
             if theme::primary_button_enabled(ui, "Run all", runnable).clicked() {
                 want_run = true;
             }
-            if !app.files.queue.is_empty() && theme::secondary_button(ui, "Clear").clicked() {
+            if n > 0 && theme::secondary_button(ui, "Clear").clicked() {
                 want_clear = true;
             }
             if theme::secondary_button(ui, "Choose files…").clicked() {
@@ -93,27 +103,43 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
     });
 
     if want_cancel {
-        for job in [app.files.seal_job.as_ref(), app.files.open_job.as_ref()]
-            .into_iter()
-            .flatten()
-        {
+        if let Some(job) = current_job(app, action) {
             job.cancel();
         }
     }
     if want_clear {
-        app.files.queue.clear();
-        app.files.seal_job = None;
-        app.files.open_job = None;
+        app.files.queue.retain(|q| q.action != action);
+        if sealing {
+            app.files.seal_job = None;
+        } else {
+            app.files.open_job = None;
+        }
         app.status = None;
     }
     if want_choose {
         app.choose_files();
     }
     if want_run {
-        run_all(app, ui.ctx().clone());
+        let ctx = ui.ctx().clone();
+        if sealing {
+            run_seal(app, &ctx);
+        } else {
+            run_open(app, &ctx);
+        }
     }
 
-    if app.files.queue.is_empty() {
+    // A file lands in the group its header says it belongs to, so work added
+    // under the other mode is easy to miss. Name it here.
+    if other_n > 0 {
+        ui.weak(format!(
+            "{other_n} file{} waiting under {}.",
+            if other_n == 1 { "" } else { "s" },
+            if sealing { "Decrypt" } else { "Encrypt" }
+        ));
+        ui.add_space(theme::space::SM);
+    }
+
+    if count(app, action) == 0 {
         let hot = ui.ctx().input(|i| !i.raw.hovered_files.is_empty());
         if theme::drop_zone(ui, hot) {
             app.choose_files();
@@ -128,19 +154,20 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         return;
     }
 
-    if seal_count > 0 {
-        group_label(ui, &format!("Seal · {seal_count}"));
+    if sealing {
         seal_options(app, ui);
-        ui.add_space(theme::space::SM);
-        rows(app, ui, FileAction::Seal);
-        ui.add_space(theme::space::SECTION);
-    }
-
-    if open_count > 0 {
-        group_label(ui, &format!("Open · {open_count}"));
+    } else {
         open_options(app, ui);
-        ui.add_space(theme::space::SM);
-        rows(app, ui, FileAction::Open);
+    }
+    ui.add_space(theme::space::SM);
+    rows(app, ui, action);
+}
+
+/// The worker for this action's group, if one is attached.
+fn current_job(app: &App, action: FileAction) -> Option<&tasks::Running> {
+    match action {
+        FileAction::Seal => app.files.seal_job.as_ref(),
+        FileAction::Open => app.files.open_job.as_ref(),
     }
 }
 
@@ -282,29 +309,6 @@ fn run_open(app: &mut App, ctx: &egui::Context) {
 }
 
 // ---------------------------------------------------------------- pieces ---
-
-fn group_label(ui: &mut egui::Ui, text: &str) {
-    ui.horizontal(|ui| {
-        ui.label(
-            egui::RichText::new(text.to_uppercase())
-                .font(theme::semibold(11.0))
-                .color(ui.visuals().weak_text_color()),
-        );
-        let rect = egui::Rect::from_min_size(
-            ui.cursor().min + egui::vec2(theme::space::SM, 8.0),
-            egui::vec2(
-                (ui.available_width() - theme::space::SM * 2.0).max(0.0),
-                1.0,
-            ),
-        );
-        ui.painter().rect_filled(
-            rect,
-            egui::CornerRadius::ZERO,
-            ui.visuals().widgets.noninteractive.bg_stroke.color,
-        );
-    });
-    ui.add_space(theme::space::SM);
-}
 
 fn seal_options(app: &mut App, ui: &mut egui::Ui) {
     theme::card(ui, |ui| {

@@ -7,12 +7,36 @@ use agepony_core::signing::store::SigningKind;
 use agepony_core::store::Kind;
 
 /// Draw the panel.
-pub fn show(app: &mut App, ui: &mut egui::Ui) {
-    theme::heading(ui, "Identities");
+pub fn show_age(app: &mut App, ui: &mut egui::Ui) {
+    theme::heading(ui, "AGE identities");
     ui.weak(format!("Stored in {}", app.config_dir.display()));
     ui.add_space(8.0);
 
-    create_row(app, ui);
+    let (named, ready) = name_fields(app, ui);
+    ui.horizontal(|ui| {
+        if theme::primary_button_enabled(ui, "Generate classic", ready).clicked() {
+            generate(app, Kind::X25519);
+        }
+        if theme::primary_button_enabled(ui, "Generate post-quantum", ready).clicked() {
+            generate(app, Kind::PostQuantum);
+        }
+        if theme::primary_button_enabled(ui, "Import from file…", named).clicked() {
+            import(app);
+        }
+    });
+    if !named {
+        ui.weak("Give the identity a label first.");
+    }
+    ui.horizontal_wrapped(|ui| {
+        ui.colored_label(theme::PQ_BADGE, "◆");
+        ui.weak(
+            "Post-quantum identities use the mlkem768x25519 recipient, the same one AgePony \
+             on iOS and Android uses. A file encrypted to one cannot also carry a classic \
+             recipient — the weakest recipient would set the bar.",
+        );
+    });
+    protect_and_import_hints(app, ui);
+
     ui.add_space(12.0);
     ui.separator();
     ui.add_space(8.0);
@@ -26,12 +50,43 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         list(app, ui);
     }
 
-    ssh_list(app, ui);
-
     ui.add_space(12.0);
     ui.separator();
     ui.add_space(8.0);
     porting(app, ui);
+}
+
+pub fn show_ssh(app: &mut App, ui: &mut egui::Ui) {
+    theme::heading(ui, "SSH signing keys");
+    ui.weak("For signing on the SSHSIG screen. These cannot decrypt.");
+    ui.add_space(8.0);
+
+    let (named, ready) = name_fields(app, ui);
+    ui.horizontal(|ui| {
+        if theme::primary_button_enabled(ui, "Generate SSH · Ed25519", ready).clicked() {
+            generate_ssh(app, SigningKind::Ed25519);
+        }
+        if theme::primary_button_enabled(ui, "Generate SSH · RSA", ready).clicked() {
+            generate_ssh(app, SigningKind::Rsa);
+        }
+        if theme::primary_button_enabled(ui, "Import SSH key…", named).clicked() {
+            import_ssh(app);
+        }
+    });
+    if !named {
+        ui.weak("Give the key a label first.");
+    }
+    protect_and_import_hints(app, ui);
+
+    ui.add_space(12.0);
+    ui.separator();
+    ui.add_space(8.0);
+
+    if app.signing_store.entries().is_empty() {
+        theme::empty_state(ui, "No signing keys yet. Generate or import one above.");
+    } else {
+        ssh_list(app, ui);
+    }
 }
 
 /// Move an identity from a phone onto this machine.
@@ -263,7 +318,7 @@ fn pending(app: &mut App, ui: &mut egui::Ui) {
     }
 }
 
-fn create_row(app: &mut App, ui: &mut egui::Ui) {
+fn name_fields(app: &mut App, ui: &mut egui::Ui) -> (bool, bool) {
     ui.horizontal(|ui| {
         ui.label("Label");
         ui.add(
@@ -287,47 +342,10 @@ fn create_row(app: &mut App, ui: &mut egui::Ui) {
 
     let named = !app.identities.label.trim().is_empty();
     let ready = named && (!app.identities.protect || !app.identities.passphrase.is_empty());
+    (named, ready)
+}
 
-    ui.horizontal(|ui| {
-        if theme::primary_button_enabled(ui, "Generate classic", ready).clicked() {
-            generate(app, Kind::X25519);
-        }
-        if theme::primary_button_enabled(ui, "Generate post-quantum", ready).clicked() {
-            generate(app, Kind::PostQuantum);
-        }
-        if theme::primary_button_enabled(ui, "Import from file…", named).clicked() {
-            import(app);
-        }
-    });
-
-    // SSH signing keys live here too — they are keys you hold, generated and
-    // imported the same way, and used to sign on the Sign screen.
-    ui.add_space(theme::space::SM);
-    ui.horizontal(|ui| {
-        if theme::primary_button_enabled(ui, "Generate SSH · Ed25519", ready).clicked() {
-            generate_ssh(app, SigningKind::Ed25519);
-        }
-        if theme::primary_button_enabled(ui, "Generate SSH · RSA", ready).clicked() {
-            generate_ssh(app, SigningKind::Rsa);
-        }
-        if theme::primary_button_enabled(ui, "Import SSH key…", named).clicked() {
-            import_ssh(app);
-        }
-    });
-
-    if !named {
-        ui.weak("Give the identity a label first.");
-    }
-
-    ui.horizontal_wrapped(|ui| {
-        ui.colored_label(theme::PQ_BADGE, "◆");
-        ui.weak(
-            "Post-quantum identities use the mlkem768x25519 recipient, the same one AgePony \
-             on iOS and Android uses. A file encrypted to one cannot also carry a classic \
-             recipient — the weakest recipient would set the bar.",
-        );
-    });
-
+fn protect_and_import_hints(app: &mut App, ui: &mut egui::Ui) {
     if app.identities.protect {
         ui.horizontal_wrapped(|ui| {
             ui.weak(
@@ -483,10 +501,6 @@ fn ssh_list(app: &mut App, ui: &mut egui::Ui) {
     if entries.is_empty() {
         return;
     }
-    ui.add_space(12.0);
-    theme::heading(ui, "SSH signing keys");
-    ui.weak("For signing files on the Sign screen. These cannot decrypt.");
-    ui.add_space(8.0);
 
     for entry in entries {
         theme::card(ui, |ui| {
@@ -638,7 +652,7 @@ fn import_ssh(app: &mut App) {
             app.status = Some(format!("Imported {} ({})", e.label, e.kind.label()));
         }
         Err(agepony_core::CoreError::PassphraseRequired) => {
-            // Surface the passphrase field (create_row shows it when non-empty).
+            // Surface the passphrase field (protect_and_import_hints shows it when non-empty).
             if app.identities.import_passphrase.is_empty() {
                 app.identities.import_passphrase = " ".to_owned();
             }

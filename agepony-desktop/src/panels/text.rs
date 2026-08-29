@@ -34,20 +34,8 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         app.text.clear_secrets();
     }
 
-    // Encrypt / Decrypt toggle. Switching modes drops the previous result,
-    // which belonged to the other operation and would be misleading.
-    ui.scope(|ui| {
-        ui.set_max_width(260.0);
-        let selected = usize::from(app.text.decrypt);
-        if let Some(i) = theme::segmented(ui, &["Encrypt", "Decrypt"], selected) {
-            let decrypt = i == 1;
-            if decrypt != app.text.decrypt {
-                app.text.decrypt = decrypt;
-                app.text.output = TextOutput::Empty;
-            }
-        }
-    });
-    ui.add_space(theme::space::SM);
+    // Encrypt vs decrypt is chosen by the AGE rail tab now, not here; this
+    // screen reads app.text.decrypt, which the tab sets (issue #5).
 
     if app.text.decrypt {
         decrypt_options(app, ui);

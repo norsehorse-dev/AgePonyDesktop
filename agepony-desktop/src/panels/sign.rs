@@ -31,13 +31,12 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         let selected = match app.sign.mode {
             SignMode::Sign => 0,
             SignMode::Verify => 1,
-            SignMode::Keys => 2,
         };
-        if let Some(i) = theme::segmented(ui, &["Sign", "Verify", "Signers"], selected) {
-            app.sign.mode = match i {
-                1 => SignMode::Verify,
-                2 => SignMode::Keys,
-                _ => SignMode::Sign,
+        if let Some(i) = theme::segmented(ui, &["Sign", "Verify"], selected) {
+            app.sign.mode = if i == 1 {
+                SignMode::Verify
+            } else {
+                SignMode::Sign
             };
         }
     });
@@ -46,7 +45,6 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
     match app.sign.mode {
         SignMode::Sign => sign_screen(app, ui),
         SignMode::Verify => verify_screen(app, ui),
-        SignMode::Keys => keys_screen(app, ui),
     }
 }
 
@@ -523,13 +521,8 @@ fn show_verdict(app: &mut App, ui: &mut egui::Ui) {
 
 // -------------------------------------------------------------------- keys ---
 
-fn keys_screen(app: &mut App, ui: &mut egui::Ui) {
-    ui.weak("Your signing keys live on the Identities screen — generate or import them there.");
-    ui.add_space(theme::space::SM);
-    trusted_signers_section(app, ui);
-}
-
-fn trusted_signers_section(app: &mut App, ui: &mut egui::Ui) {
+/// The trusted-signers manager, shown under Identities > SSHSIG > Signers.
+pub fn signers_screen(app: &mut App, ui: &mut egui::Ui) {
     theme::section(ui, "Trusted signers");
     theme::card(ui, |ui| {
         ui.label("People whose signatures you recognise. Add one by pasting their SSH public key.");

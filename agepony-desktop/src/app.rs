@@ -16,41 +16,32 @@ use std::path::PathBuf;
 /// Which destination the rail has selected.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum Tab {
-    /// Sealing and opening, one screen. The aliases absorb prefs persisted
-    /// before Encrypt and Decrypt merged, so an upgrade keeps the user's other
-    /// preferences instead of failing the whole blob back to defaults.
+    /// Everything age: encrypt and decrypt, files and text (issue #5). The
+    /// aliases absorb prefs persisted under the old flat rail (Files and Text,
+    /// and before those merged, Encrypt and Decrypt), so an upgrade keeps the
+    /// rest of the blob instead of failing it all back to defaults.
     #[default]
-    #[serde(alias = "Encrypt", alias = "Decrypt")]
-    Files,
-    /// Encrypting and decrypting pasted text, not files.
-    Text,
-    /// Signing and verifying files, and managing signing keys and signers.
-    Sign,
-    /// Identity management.
+    #[serde(alias = "Files", alias = "Text", alias = "Encrypt", alias = "Decrypt")]
+    Age,
+    /// SSHSIG: sign and verify, and the trusted-signers list.
+    #[serde(alias = "Sign")]
+    Sshsig,
+    /// Identities and recipients. The alias folds in the old standalone
+    /// Recipients destination.
+    #[serde(alias = "Recipients")]
     Identities,
-    /// The recipient book.
-    Recipients,
     /// Appearance, storage, and what this build is.
     Settings,
 }
 
 impl Tab {
-    pub(crate) const ALL: [Tab; 6] = [
-        Tab::Files,
-        Tab::Text,
-        Tab::Sign,
-        Tab::Identities,
-        Tab::Recipients,
-        Tab::Settings,
-    ];
+    pub(crate) const ALL: [Tab; 4] = [Tab::Age, Tab::Sshsig, Tab::Identities, Tab::Settings];
 
     pub(crate) const fn label(self) -> &'static str {
         match self {
-            Tab::Files => "Files",
-            Tab::Text => "Text",
-            Tab::Sign => "Sign",
+            Tab::Age => "AGE",
+            Tab::Sshsig => "SSHSIG",
             Tab::Identities => "Identities",
-            Tab::Recipients => "Recipients",
             Tab::Settings => "Settings",
         }
     }
@@ -58,17 +49,52 @@ impl Tab {
     /// The rail glyph for this destination.
     pub(crate) const fn icon(self) -> char {
         match self {
-            Tab::Files => crate::theme::icon::FILES,
-            // Reuses declared glyphs (compose, confirm): the icon face is subset
-            // to the declared set, so distinct Text/Sign glyphs need the font
-            // re-subset first.
-            Tab::Text => crate::theme::icon::PENCIL,
-            Tab::Sign => crate::theme::icon::CIRCLE_CHECK,
+            Tab::Age => crate::theme::icon::FILES,
+            Tab::Sshsig => crate::theme::icon::CIRCLE_CHECK,
             Tab::Identities => crate::theme::icon::KEY_ROUND,
-            Tab::Recipients => crate::theme::icon::USERS,
             Tab::Settings => crate::theme::icon::SETTINGS,
         }
     }
+}
+
+/// Which AGE sub-screen is showing (issue #5).
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub enum AgeTab {
+    /// Encrypt and decrypt files.
+    #[default]
+    Files,
+    /// Encrypt and decrypt pasted text.
+    Text,
+}
+
+/// Which key family the Identities tab is showing (issue #5).
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub enum IdFamily {
+    /// age encryption keys.
+    #[default]
+    Age,
+    /// SSHSIG signing keys.
+    Sshsig,
+}
+
+/// The private-keys half or the public-list half of a family (issue #5).
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub enum IdSection {
+    /// Private keys, i.e. identities.
+    #[default]
+    Identity,
+    /// Public list: recipients for AGE, trusted signers for SSHSIG.
+    Public,
+}
+
+/// Which AGE operation is showing: encrypt or decrypt (issue #5).
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub enum AgeMode {
+    /// Sealing.
+    #[default]
+    Encrypt,
+    /// Opening.
+    Decrypt,
 }
 
 /// What will happen to a queued file.
@@ -285,8 +311,6 @@ pub enum SignMode {
     Sign,
     /// Verify a file against a detached signature.
     Verify,
-    /// Manage signing keys and trusted signers.
-    Keys,
 }
 
 /// How much a verified signature is trusted.
@@ -485,6 +509,14 @@ const PREFS_KEY: &str = "agepony-prefs";
 pub struct App {
     /// Selected rail destination.
     pub tab: Tab,
+    /// Which AGE operation (encrypt/decrypt) is showing (issue #5).
+    pub age_mode: AgeMode,
+    /// Which AGE input kind (files/text) is showing (issue #5).
+    pub age_tab: AgeTab,
+    /// Which key family the Identities tab is showing (issue #5).
+    pub id_family: IdFamily,
+    /// The private-keys or public-list half of that family (issue #5).
+    pub id_section: IdSection,
     /// Files screen state.
     pub files: FilesState,
     /// Text screen state.
@@ -589,6 +621,10 @@ impl App {
 
         Self {
             tab: prefs.tab,
+            age_mode: AgeMode::default(),
+            age_tab: AgeTab::default(),
+            id_family: IdFamily::default(),
+            id_section: IdSection::default(),
             files: FilesState {
                 armor: prefs.armor,
                 source: prefs.decrypt_source,
@@ -657,7 +693,8 @@ impl App {
             return;
         }
 
-        self.tab = Tab::Files;
+        self.tab = Tab::Age;
+        self.age_tab = AgeTab::Files;
         let added = crate::panels::files::add_paths(self, dropped);
         self.status = Some(match added {
             0 => "Those files are already in the queue".to_owned(),
@@ -698,10 +735,11 @@ impl App {
         }
 
         if ctx.input_mut(|i| i.consume_key(Modifiers::COMMAND, Key::Enter)) {
-            match self.tab {
-                Tab::Files => crate::panels::files::run_all(self, ctx.clone()),
-                Tab::Text => crate::panels::text::run(self),
-                _ => {}
+            if self.tab == Tab::Age {
+                match self.age_tab {
+                    AgeTab::Files => crate::panels::files::run_all(self, ctx.clone()),
+                    AgeTab::Text => crate::panels::text::run(self),
+                }
             }
         }
 
@@ -714,7 +752,8 @@ impl App {
     /// is no wrong dialog to have opened.
     pub(crate) fn choose_files(&mut self) {
         if let Some(files) = rfd::FileDialog::new().pick_files() {
-            self.tab = Tab::Files;
+            self.tab = Tab::Age;
+            self.age_tab = AgeTab::Files;
             let added = crate::panels::files::add_paths(self, files);
             if added > 0 {
                 self.status = None;
@@ -762,7 +801,8 @@ impl App {
             return;
         }
         // On the Text screen, Escape wipes whatever secret is on show.
-        if self.tab == Tab::Text
+        if self.tab == Tab::Age
+            && self.age_tab == AgeTab::Text
             && (!self.text.input.is_empty() || self.text.output.as_str().is_some())
         {
             self.text.clear_secrets();
@@ -774,7 +814,9 @@ impl App {
     /// Wipe the Text screen's decrypted plaintext when the user navigates away,
     /// so a decrypted note does not sit on a screen the user is no longer on.
     fn wipe_text_plaintext_off_tab(&mut self) {
-        if self.tab != Tab::Text && self.text.output.is_plaintext() {
+        if !(self.tab == Tab::Age && self.age_tab == AgeTab::Text)
+            && self.text.output.is_plaintext()
+        {
             self.text.output = TextOutput::Empty;
         }
     }
@@ -964,11 +1006,88 @@ impl eframe::App for App {
 
         egui::CentralPanel::default().show(ui, |ui| {
             egui::ScrollArea::vertical().show(ui, |ui| match self.tab {
-                Tab::Files => panels::files::show(self, ui),
-                Tab::Text => panels::text::show(self, ui),
-                Tab::Sign => panels::sign::show(self, ui),
-                Tab::Identities => panels::identities::show(self, ui),
-                Tab::Recipients => panels::recipients::show(self, ui),
+                Tab::Age => {
+                    ui.scope(|ui| {
+                        ui.set_max_width(260.0);
+                        let selected = self.age_mode as usize;
+                        if let Some(i) =
+                            crate::theme::segmented(ui, &["Encrypt", "Decrypt"], selected)
+                        {
+                            self.age_mode = if i == 1 {
+                                AgeMode::Decrypt
+                            } else {
+                                AgeMode::Encrypt
+                            };
+                        }
+                    });
+                    ui.add_space(crate::theme::space::SM);
+                    ui.scope(|ui| {
+                        ui.set_max_width(260.0);
+                        let selected = self.age_tab as usize;
+                        if let Some(i) = crate::theme::segmented(ui, &["Files", "Text"], selected) {
+                            self.age_tab = if i == 1 { AgeTab::Text } else { AgeTab::Files };
+                        }
+                    });
+                    ui.add_space(crate::theme::space::MD);
+                    match (self.age_mode, self.age_tab) {
+                        (AgeMode::Encrypt, AgeTab::Files) => panels::files::show_seal(self, ui),
+                        (AgeMode::Decrypt, AgeTab::Files) => panels::files::show_open(self, ui),
+                        (mode, AgeTab::Text) => {
+                            let want_decrypt = mode == AgeMode::Decrypt;
+                            if self.text.decrypt != want_decrypt {
+                                self.text.decrypt = want_decrypt;
+                                self.text.output = TextOutput::Empty;
+                            }
+                            panels::text::show(self, ui);
+                        }
+                    }
+                }
+                Tab::Sshsig => panels::sign::show(self, ui),
+                Tab::Identities => {
+                    ui.scope(|ui| {
+                        ui.set_max_width(260.0);
+                        let selected = self.id_family as usize;
+                        if let Some(i) = crate::theme::segmented(ui, &["AGE", "SSHSIG"], selected) {
+                            self.id_family = if i == 1 {
+                                IdFamily::Sshsig
+                            } else {
+                                IdFamily::Age
+                            };
+                        }
+                    });
+                    ui.add_space(crate::theme::space::SM);
+                    let public_label = if self.id_family == IdFamily::Age {
+                        "Recipients"
+                    } else {
+                        "Signers"
+                    };
+                    ui.scope(|ui| {
+                        ui.set_max_width(260.0);
+                        let selected = self.id_section as usize;
+                        if let Some(i) =
+                            crate::theme::segmented(ui, &["Identities", public_label], selected)
+                        {
+                            self.id_section = if i == 1 {
+                                IdSection::Public
+                            } else {
+                                IdSection::Identity
+                            };
+                        }
+                    });
+                    ui.add_space(crate::theme::space::MD);
+                    match (self.id_family, self.id_section) {
+                        (IdFamily::Age, IdSection::Identity) => {
+                            panels::identities::show_age(self, ui);
+                        }
+                        (IdFamily::Age, IdSection::Public) => panels::recipients::show(self, ui),
+                        (IdFamily::Sshsig, IdSection::Identity) => {
+                            panels::identities::show_ssh(self, ui);
+                        }
+                        (IdFamily::Sshsig, IdSection::Public) => {
+                            panels::sign::signers_screen(self, ui);
+                        }
+                    }
+                }
                 Tab::Settings => panels::settings::show(self, ui),
             });
         });
