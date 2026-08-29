@@ -1007,7 +1007,7 @@ impl eframe::App for App {
         egui::CentralPanel::default().show(ui, |ui| {
             egui::ScrollArea::vertical().show(ui, |ui| match self.tab {
                 Tab::Age => {
-                    ui.scope(|ui| {
+                    ui.push_id("age-mode", |ui| {
                         ui.set_max_width(260.0);
                         let selected = self.age_mode as usize;
                         if let Some(i) =
@@ -1021,7 +1021,7 @@ impl eframe::App for App {
                         }
                     });
                     ui.add_space(crate::theme::space::SM);
-                    ui.scope(|ui| {
+                    ui.push_id("age-kind", |ui| {
                         ui.set_max_width(260.0);
                         let selected = self.age_tab as usize;
                         if let Some(i) = crate::theme::segmented(ui, &["Files", "Text"], selected) {
@@ -1044,7 +1044,7 @@ impl eframe::App for App {
                 }
                 Tab::Sshsig => panels::sign::show(self, ui),
                 Tab::Identities => {
-                    ui.scope(|ui| {
+                    ui.push_id("id-family", |ui| {
                         ui.set_max_width(260.0);
                         let selected = self.id_family as usize;
                         if let Some(i) = crate::theme::segmented(ui, &["AGE", "SSHSIG"], selected) {
@@ -1061,7 +1061,7 @@ impl eframe::App for App {
                     } else {
                         "Signers"
                     };
-                    ui.scope(|ui| {
+                    ui.push_id("id-section", |ui| {
                         ui.set_max_width(260.0);
                         let selected = self.id_section as usize;
                         if let Some(i) =
