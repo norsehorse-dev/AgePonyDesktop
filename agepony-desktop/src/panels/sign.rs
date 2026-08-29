@@ -63,7 +63,8 @@ fn sign_screen(app: &mut App, ui: &mut egui::Ui) {
         return;
     }
 
-    let mut run = false;
+    let mut run_files = false;
+    let mut run_text = false;
     theme::card(ui, |ui| {
         theme::section(ui, "Signing key");
         let keys: Vec<(String, String, bool)> = app
@@ -107,17 +108,6 @@ fn sign_screen(app: &mut App, ui: &mut egui::Ui) {
         }
 
         ui.add_space(theme::space::SM);
-        theme::section(ui, "Files");
-        if theme::secondary_button(ui, "Choose files…").clicked() {
-            if let Some(files) = rfd::FileDialog::new().pick_files() {
-                app.sign.sign_files = files;
-            }
-        }
-        for f in &app.sign.sign_files {
-            ui.weak(f.display().to_string());
-        }
-
-        ui.add_space(theme::space::SM);
         theme::section(ui, "Namespace");
         if app.sign.sign_namespace.is_empty() {
             app.sign.sign_namespace = signing::NAMESPACE.to_owned();
@@ -133,14 +123,97 @@ fn sign_screen(app: &mut App, ui: &mut egui::Ui) {
         );
 
         ui.add_space(theme::space::SM);
-        let enabled = app.sign.sign_key_id.is_some() && !app.sign.sign_files.is_empty();
-        if theme::primary_button_enabled(ui, "Sign", enabled).clicked() {
-            run = true;
+        let selected = usize::from(app.sign.sign_text_mode);
+        if let Some(i) = theme::segmented(ui, &["Files", "Text"], selected) {
+            app.sign.sign_text_mode = i == 1;
+        }
+        let key_ready = app.sign.sign_key_id.is_some();
+
+        if app.sign.sign_text_mode {
+            ui.add_space(theme::space::SM);
+            theme::section(ui, "Text");
+            ui.add(
+                egui::TextEdit::multiline(&mut app.sign.sign_text)
+                    .hint_text("Type or paste text to sign")
+                    .desired_rows(6)
+                    .desired_width(f32::INFINITY),
+            );
+
+            ui.add_space(theme::space::SM);
+            let enabled = key_ready && !app.sign.sign_text.trim().is_empty();
+            if theme::primary_button_enabled(ui, "Sign", enabled).clicked() {
+                run_text = true;
+            }
+
+            if !app.sign.sign_text_output.is_empty() {
+                ui.add_space(theme::space::SM);
+                theme::section(ui, "Signature");
+                ui.add(
+                    egui::TextEdit::multiline(&mut app.sign.sign_text_output)
+                        .desired_rows(6)
+                        .desired_width(f32::INFINITY),
+                );
+                if theme::secondary_button(ui, "Copy").clicked() {
+                    ui.ctx().copy_text(app.sign.sign_text_output.clone());
+                    app.status = Some("Signature copied.".to_owned());
+                }
+            }
+        } else {
+            ui.add_space(theme::space::SM);
+            theme::section(ui, "Files");
+            if theme::secondary_button(ui, "Choose files…").clicked() {
+                if let Some(files) = rfd::FileDialog::new().pick_files() {
+                    app.sign.sign_files = files;
+                }
+            }
+            for f in &app.sign.sign_files {
+                ui.weak(f.display().to_string());
+            }
+
+            ui.add_space(theme::space::SM);
+            let enabled = key_ready && !app.sign.sign_files.is_empty();
+            if theme::primary_button_enabled(ui, "Sign", enabled).clicked() {
+                run_files = true;
+            }
         }
     });
 
-    if run {
+    if run_files {
         run_sign(app);
+    }
+    if run_text {
+        run_sign_text(app);
+    }
+}
+
+fn run_sign_text(app: &mut App) {
+    let Some(id) = app.sign.sign_key_id.clone() else {
+        return;
+    };
+    let passphrase = (!app.sign.sign_passphrase.is_empty())
+        .then(|| age::secrecy::SecretString::from(app.sign.sign_passphrase.clone()));
+    let namespace = {
+        let n = app.sign.sign_namespace.trim();
+        if n.is_empty() {
+            signing::NAMESPACE.to_owned()
+        } else {
+            n.to_owned()
+        }
+    };
+    let message = app.sign.sign_text.as_bytes().to_vec();
+
+    match app
+        .signing_store
+        .sign_with_namespace(&id, &message, &namespace, passphrase.as_ref())
+    {
+        Ok(armored) => {
+            app.sign.sign_text_output = armored;
+            app.status = Some("Signed. The signature is below, ready to copy.".to_owned());
+        }
+        Err(e) => {
+            app.sign.sign_text_output.clear();
+            app.status = Some(format!("Signing failed: {e}"));
+        }
     }
 }
 
@@ -207,54 +280,108 @@ fn run_sign(app: &mut App) {
 // ------------------------------------------------------------------ verify ---
 
 fn verify_screen(app: &mut App, ui: &mut egui::Ui) {
-    let mut run = false;
+    let mut run_files = false;
+    let mut run_text = false;
     theme::card(ui, |ui| {
-        theme::section(ui, "File");
-        ui.horizontal(|ui| {
-            if theme::secondary_button(ui, "Choose file…").clicked() {
-                if let Some(f) = rfd::FileDialog::new().pick_file() {
-                    app.sign.verify_file = Some(f);
-                    app.sign.verify_result = None;
-                }
-            }
-            if let Some(f) = &app.sign.verify_file {
-                ui.weak(f.display().to_string());
-            }
-        });
-
-        theme::section(ui, "Signature");
-        ui.horizontal(|ui| {
-            if theme::secondary_button(ui, "Choose .sig…").clicked() {
-                if let Some(f) = rfd::FileDialog::new().pick_file() {
-                    app.sign.verify_sig = Some(f);
-                    app.sign.verify_result = None;
-                }
-            }
-            if let Some(f) = &app.sign.verify_sig {
-                ui.weak(f.display().to_string());
-            }
-        });
-
-        theme::section(ui, "Namespace");
-        ui.add(
-            egui::TextEdit::singleline(&mut app.sign.verify_namespace)
-                .hint_text("optional: an extra namespace to accept")
-                .desired_width(280.0),
-        );
-        ui.weak(
-            "AgePony's own namespaces are always accepted. Add one here to verify a \
-             signature made under a different ssh-keygen namespace.",
-        );
-
         ui.add_space(theme::space::SM);
-        let enabled = app.sign.verify_file.is_some() && app.sign.verify_sig.is_some();
-        if theme::primary_button_enabled(ui, "Verify", enabled).clicked() {
-            run = true;
+        let selected = usize::from(app.sign.verify_text_mode);
+        if let Some(i) = theme::segmented(ui, &["Files", "Text"], selected) {
+            app.sign.verify_text_mode = i == 1;
+            app.sign.verify_result = None;
+        }
+
+        if app.sign.verify_text_mode {
+            ui.add_space(theme::space::SM);
+            theme::section(ui, "Text");
+            if ui
+                .add(
+                    egui::TextEdit::multiline(&mut app.sign.verify_text)
+                        .hint_text("The exact text that was signed")
+                        .desired_rows(5)
+                        .desired_width(f32::INFINITY),
+                )
+                .changed()
+            {
+                app.sign.verify_result = None;
+            }
+
+            theme::section(ui, "Signature");
+            if ui
+                .add(
+                    egui::TextEdit::multiline(&mut app.sign.verify_sig_text)
+                        .hint_text("-----BEGIN SSH SIGNATURE-----")
+                        .desired_rows(5)
+                        .desired_width(f32::INFINITY),
+                )
+                .changed()
+            {
+                app.sign.verify_result = None;
+            }
+
+            theme::section(ui, "Namespace");
+            ui.add(
+                egui::TextEdit::singleline(&mut app.sign.verify_namespace)
+                    .hint_text("optional: an extra namespace to accept")
+                    .desired_width(280.0),
+            );
+
+            ui.add_space(theme::space::SM);
+            let enabled =
+                !app.sign.verify_text.is_empty() && !app.sign.verify_sig_text.trim().is_empty();
+            if theme::primary_button_enabled(ui, "Verify", enabled).clicked() {
+                run_text = true;
+            }
+        } else {
+            theme::section(ui, "File");
+            ui.horizontal(|ui| {
+                if theme::secondary_button(ui, "Choose file…").clicked() {
+                    if let Some(f) = rfd::FileDialog::new().pick_file() {
+                        app.sign.verify_file = Some(f);
+                        app.sign.verify_result = None;
+                    }
+                }
+                if let Some(f) = &app.sign.verify_file {
+                    ui.weak(f.display().to_string());
+                }
+            });
+
+            theme::section(ui, "Signature");
+            ui.horizontal(|ui| {
+                if theme::secondary_button(ui, "Choose .sig…").clicked() {
+                    if let Some(f) = rfd::FileDialog::new().pick_file() {
+                        app.sign.verify_sig = Some(f);
+                        app.sign.verify_result = None;
+                    }
+                }
+                if let Some(f) = &app.sign.verify_sig {
+                    ui.weak(f.display().to_string());
+                }
+            });
+
+            theme::section(ui, "Namespace");
+            ui.add(
+                egui::TextEdit::singleline(&mut app.sign.verify_namespace)
+                    .hint_text("optional: an extra namespace to accept")
+                    .desired_width(280.0),
+            );
+            ui.weak(
+                "AgePony's own namespaces are always accepted. Add one here to verify a \
+                 signature made under a different ssh-keygen namespace.",
+            );
+
+            ui.add_space(theme::space::SM);
+            let enabled = app.sign.verify_file.is_some() && app.sign.verify_sig.is_some();
+            if theme::primary_button_enabled(ui, "Verify", enabled).clicked() {
+                run_files = true;
+            }
         }
     });
 
-    if run {
+    if run_files {
         run_verify(app);
+    }
+    if run_text {
+        run_verify_text(app);
     }
 
     show_verdict(app, ui);
@@ -279,7 +406,16 @@ fn run_verify(app: &mut App) {
             return;
         }
     };
+    apply_verdict(app, &sig, &message);
+}
 
+fn run_verify_text(app: &mut App) {
+    let message = app.sign.verify_text.as_bytes().to_vec();
+    let sig = app.sign.verify_sig_text.as_bytes().to_vec();
+    apply_verdict(app, &sig, &message);
+}
+
+fn apply_verdict(app: &mut App, sig: &[u8], message: &[u8]) {
     let extra = app.sign.verify_namespace.trim().to_owned();
     let mut namespaces: Vec<&str> = Vec::new();
     if !extra.is_empty() {
@@ -287,7 +423,7 @@ fn run_verify(app: &mut App) {
     }
     namespaces.extend_from_slice(signing::ACCEPTED_NAMESPACES);
 
-    match signing::verify_detached_any(&sig, &message, &namespaces) {
+    match signing::verify_detached_any(sig, message, &namespaces) {
         Ok(verdict) => {
             let fingerprint = signing::fingerprint(&verdict.signer_wire).ok();
             let trust = if !verdict.valid {

@@ -328,6 +328,12 @@ pub struct SignState {
     /// Namespace to sign under. Defaults to the legacy `agepony` (set lazily in
     /// the panel); a user can change it for `ssh-keygen` interop (issue #3).
     pub sign_namespace: String,
+    /// Sign pasted text instead of files (issue #4).
+    pub sign_text_mode: bool,
+    /// The text to sign in text mode.
+    pub sign_text: String,
+    /// The armored signature produced for signed text, shown for copying.
+    pub sign_text_output: String,
 
     // ---- verify ---------------------------------------------------------
     /// The file being verified.
@@ -341,6 +347,12 @@ pub struct SignState {
     /// An extra namespace to accept when verifying, on top of AgePony's own
     /// accepted set. Empty means accept only the built-ins (issue #3).
     pub verify_namespace: String,
+    /// Verify pasted text instead of files (issue #4).
+    pub verify_text_mode: bool,
+    /// The text whose signature is being verified in text mode.
+    pub verify_text: String,
+    /// The pasted armored signature to verify in text mode.
+    pub verify_sig_text: String,
 
     // ---- signers form ---------------------------------------------------
     /// Name for a trusted signer being pasted.
