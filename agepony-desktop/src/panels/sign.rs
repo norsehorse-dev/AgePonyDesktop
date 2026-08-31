@@ -123,7 +123,9 @@ fn sign_screen(app: &mut App, ui: &mut egui::Ui) {
         ui.add_space(theme::space::SM);
         let selected = usize::from(app.sign.sign_text_mode);
         let picked = ui
-            .push_id("sign-filetext", |ui| theme::segmented(ui, &["Files", "Text"], selected))
+            .push_id("sign-filetext", |ui| {
+                theme::segmented(ui, &["Files", "Text"], selected)
+            })
             .inner;
         if let Some(i) = picked {
             app.sign.sign_text_mode = i == 1;
@@ -321,7 +323,9 @@ fn verify_screen(app: &mut App, ui: &mut egui::Ui) {
         ui.add_space(theme::space::SM);
         let selected = usize::from(app.sign.verify_text_mode);
         let picked = ui
-            .push_id("verify-filetext", |ui| theme::segmented(ui, &["Files", "Text"], selected))
+            .push_id("verify-filetext", |ui| {
+                theme::segmented(ui, &["Files", "Text"], selected)
+            })
             .inner;
         if let Some(i) = picked {
             app.sign.verify_text_mode = i == 1;

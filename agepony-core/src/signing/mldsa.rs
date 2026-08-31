@@ -298,7 +298,9 @@ pub fn verify(signature: &[u8], message: &[u8], namespace: &str) -> Result<Verdi
     if pk_name != ALG_NAME.as_bytes() {
         return Err(CoreError::InvalidSignature);
     }
-    let mldsa_pk = comp_pk.get(0..MLDSA_PK).ok_or(CoreError::InvalidSignature)?;
+    let mldsa_pk = comp_pk
+        .get(0..MLDSA_PK)
+        .ok_or(CoreError::InvalidSignature)?;
     let ed_pk = comp_pk
         .get(MLDSA_PK..MLDSA_PK + ED_PK)
         .ok_or(CoreError::InvalidSignature)?;
@@ -306,7 +308,9 @@ pub fn verify(signature: &[u8], message: &[u8], namespace: &str) -> Result<Verdi
     let mut sr = Reader::new(sigblob);
     let _sig_name = sr.string()?;
     let comp_sig = sr.string()?;
-    let mldsa_sig = comp_sig.get(0..MLDSA_SIG).ok_or(CoreError::InvalidSignature)?;
+    let mldsa_sig = comp_sig
+        .get(0..MLDSA_SIG)
+        .ok_or(CoreError::InvalidSignature)?;
     let ed_sig = comp_sig
         .get(MLDSA_SIG..MLDSA_SIG + ED_SIG)
         .ok_or(CoreError::InvalidSignature)?;
@@ -341,14 +345,17 @@ pub fn verify(signature: &[u8], message: &[u8], namespace: &str) -> Result<Verdi
     let vk_enc = ml_dsa::EncodedVerifyingKey::<MlDsa44>::try_from(mldsa_pk)
         .map_err(|_| CoreError::InvalidSignature)?;
     let vk = ml_dsa::VerifyingKey::<MlDsa44>::decode(&vk_enc);
-    let sig =
-        ml_dsa::Signature::<MlDsa44>::try_from(mldsa_sig).map_err(|_| CoreError::InvalidSignature)?;
+    let sig = ml_dsa::Signature::<MlDsa44>::try_from(mldsa_sig)
+        .map_err(|_| CoreError::InvalidSignature)?;
     let mldsa_ok = vk.verify_with_context(&m, LABEL, &sig);
 
     let ed_pk_arr: [u8; 32] = ed_pk.try_into().map_err(|_| CoreError::InvalidSignature)?;
     let ed_sig_arr: [u8; 64] = ed_sig.try_into().map_err(|_| CoreError::InvalidSignature)?;
     let ed_ok = ed25519_dalek::VerifyingKey::from_bytes(&ed_pk_arr)
-        .map(|k| k.verify(&m, &ed25519_dalek::Signature::from_bytes(&ed_sig_arr)).is_ok())
+        .map(|k| {
+            k.verify(&m, &ed25519_dalek::Signature::from_bytes(&ed_sig_arr))
+                .is_ok()
+        })
         .unwrap_or(false);
 
     if mldsa_ok && ed_ok {

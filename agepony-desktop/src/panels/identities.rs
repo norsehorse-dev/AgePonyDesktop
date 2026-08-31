@@ -616,10 +616,7 @@ fn ssh_list(app: &mut App, ui: &mut egui::Ui) {
 /// so they can hand it out for others to verify against (issue #5).
 fn export_ssh_public(app: &mut App, label: &str, public_line: &str) {
     let suggested = format!("{}.pub", label.replace(' ', "_"));
-    let Some(dest) = rfd::FileDialog::new()
-        .set_file_name(&suggested)
-        .save_file()
-    else {
+    let Some(dest) = rfd::FileDialog::new().set_file_name(&suggested).save_file() else {
         return;
     };
     let body = if public_line.ends_with('\n') {

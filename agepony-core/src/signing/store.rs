@@ -179,7 +179,14 @@ impl SigningStore {
     ) -> Result<SigningEntry> {
         if kind == SigningKind::MldsaEd25519 {
             let g = super::mldsa::generate()?;
-            return self.insert(label, &g.public_line, &g.fingerprint, kind, &g.secret, passphrase);
+            return self.insert(
+                label,
+                &g.public_line,
+                &g.fingerprint,
+                kind,
+                &g.secret,
+                passphrase,
+            );
         }
         let mut rng = rand_core::OsRng;
         let key = match kind {
