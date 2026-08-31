@@ -26,7 +26,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         |_ui| {},
     );
 
-    ui.scope(|ui| {
+    ui.push_id("sshsig-mode", |ui| {
         ui.set_max_width(360.0);
         let selected = match app.sign.mode {
             SignMode::Sign => 0,
@@ -122,7 +122,10 @@ fn sign_screen(app: &mut App, ui: &mut egui::Ui) {
 
         ui.add_space(theme::space::SM);
         let selected = usize::from(app.sign.sign_text_mode);
-        if let Some(i) = theme::segmented(ui, &["Files", "Text"], selected) {
+        let picked = ui
+            .push_id("sign-filetext", |ui| theme::segmented(ui, &["Files", "Text"], selected))
+            .inner;
+        if let Some(i) = picked {
             app.sign.sign_text_mode = i == 1;
         }
         let key_ready = app.sign.sign_key_id.is_some();
@@ -277,16 +280,55 @@ fn run_sign(app: &mut App) {
 
 // ------------------------------------------------------------------ verify ---
 
+/// The trusted-signer picker on the Verify screen: leave all unchecked to
+/// accept any trusted signer, or name who you expect signed (issue #5).
+fn verify_signer_picker(app: &mut App, ui: &mut egui::Ui) {
+    theme::section(ui, "Expected signer");
+    if app.signers.is_empty() {
+        ui.weak(
+            "No trusted signers yet. Add them under Identities \u{203a} SSHSIG \u{203a} Signers, \
+             then pick who you expect signed this.",
+        );
+        return;
+    }
+    ui.weak("Leave unchecked to accept any trusted signer, or pick who you expect signed this.");
+    let signers: Vec<(String, String, String)> = app
+        .signers
+        .all()
+        .iter()
+        .map(|s| (s.id.clone(), s.name.clone(), s.key_type.clone()))
+        .collect();
+    for (id, name, key_type) in signers {
+        let mut on = app.sign.verify_expect.contains(&id);
+        if ui
+            .checkbox(&mut on, format!("{name}  \u{b7}  {key_type}"))
+            .changed()
+        {
+            if on {
+                app.sign.verify_expect.insert(id);
+            } else {
+                app.sign.verify_expect.remove(&id);
+            }
+            app.sign.verify_result = None;
+        }
+    }
+}
+
 fn verify_screen(app: &mut App, ui: &mut egui::Ui) {
     let mut run_files = false;
     let mut run_text = false;
     theme::card(ui, |ui| {
         ui.add_space(theme::space::SM);
         let selected = usize::from(app.sign.verify_text_mode);
-        if let Some(i) = theme::segmented(ui, &["Files", "Text"], selected) {
+        let picked = ui
+            .push_id("verify-filetext", |ui| theme::segmented(ui, &["Files", "Text"], selected))
+            .inner;
+        if let Some(i) = picked {
             app.sign.verify_text_mode = i == 1;
             app.sign.verify_result = None;
         }
+
+        verify_signer_picker(app, ui);
 
         if app.sign.verify_text_mode {
             ui.add_space(theme::space::SM);
@@ -424,21 +466,40 @@ fn apply_verdict(app: &mut App, sig: &[u8], message: &[u8]) {
     match signing::verify_detached_any(sig, message, &namespaces) {
         Ok(verdict) => {
             let fingerprint = signing::fingerprint(&verdict.signer_wire).ok();
-            let trust = if !verdict.valid {
-                Trust::Invalid(
-                    verdict
-                        .reason
-                        .unwrap_or_else(|| "did not verify".to_owned()),
-                )
-            } else if let Some(entry) = app
+            let matched = app
+                .signers
+                .matching(&verdict.signer_wire)
+                .map(|s| (s.id.clone(), s.name.clone()));
+            let own_label = app
                 .signing_store
                 .entries()
                 .iter()
                 .find(|e| e.public_wire().as_deref() == Some(verdict.signer_wire.as_slice()))
-            {
-                Trust::Known(format!("{} (your key)", entry.label))
-            } else if let Some(signer) = app.signers.matching(&verdict.signer_wire) {
-                Trust::Known(signer.name.clone())
+                .map(|e| e.label.clone());
+            let trust = if !verdict.valid {
+                Trust::Invalid(
+                    verdict
+                        .reason
+                        .clone()
+                        .unwrap_or_else(|| "did not verify".to_owned()),
+                )
+            } else if !app.sign.verify_expect.is_empty() {
+                match &matched {
+                    Some((id, name)) if app.sign.verify_expect.contains(id) => {
+                        Trust::Known(name.clone())
+                    }
+                    Some((_, name)) => Trust::Unexpected(name.clone()),
+                    None => Trust::Unexpected(
+                        own_label
+                            .clone()
+                            .map(|l| format!("{l} (your key)"))
+                            .unwrap_or_else(|| "an unknown key".to_owned()),
+                    ),
+                }
+            } else if let Some(label) = &own_label {
+                Trust::Known(format!("{label} (your key)"))
+            } else if let Some((_, name)) = &matched {
+                Trust::Known(name.clone())
             } else {
                 Trust::ValidUnknown(verdict.signer_wire.clone())
             };
@@ -471,6 +532,12 @@ fn show_verdict(app: &mut App, ui: &mut egui::Ui) {
                 ui.colored_label(
                     theme::PQ_BADGE,
                     "✓ Valid signature, but the signer is not in your trusted list.",
+                );
+            }
+            Trust::Unexpected(who) => {
+                ui.colored_label(
+                    theme::PQ_BADGE,
+                    format!("⚠ Signed by {who}, not one of the signers you selected."),
                 );
             }
             Trust::Invalid(reason) => {

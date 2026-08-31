@@ -321,6 +321,9 @@ pub enum Trust {
     /// Cryptographically valid, but the signer is not in any store. Carries the
     /// signer's wire blob so it can be trusted with one click.
     ValidUnknown(Vec<u8>),
+    /// Cryptographically valid, but not from one of the signers the user said
+    /// they expected (issue #5). Carries who actually signed.
+    Unexpected(String),
     /// The signature did not verify: why.
     Invalid(String),
 }
@@ -377,6 +380,9 @@ pub struct SignState {
     pub verify_text: String,
     /// The pasted armored signature to verify in text mode.
     pub verify_sig_text: String,
+    /// The signer ids the user expects for this verification. Empty accepts any
+    /// trusted signer; non-empty passes only these (issue #5).
+    pub verify_expect: std::collections::BTreeSet<String>,
 
     // ---- signers form ---------------------------------------------------
     /// Name for a trusted signer being pasted.
@@ -1006,6 +1012,12 @@ impl eframe::App for App {
         egui::CentralPanel::default().show(ui, |ui| {
             egui::ScrollArea::vertical().show(ui, |ui| match self.tab {
                 Tab::Age => {
+                    crate::theme::screen_head(
+                        ui,
+                        "AGE",
+                        "Encrypt and decrypt files and text with age.",
+                        |_ui| {},
+                    );
                     ui.push_id("age-mode", |ui| {
                         ui.set_max_width(260.0);
                         let selected = self.age_mode as usize;
@@ -1043,6 +1055,12 @@ impl eframe::App for App {
                 }
                 Tab::Sshsig => panels::sign::show(self, ui),
                 Tab::Identities => {
+                    crate::theme::screen_head(
+                        ui,
+                        "Identities",
+                        "Your age keys, SSH signing keys, recipients, and trusted signers.",
+                        |_ui| {},
+                    );
                     ui.push_id("id-family", |ui| {
                         ui.set_max_width(260.0);
                         let selected = self.id_family as usize;

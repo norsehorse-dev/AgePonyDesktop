@@ -579,7 +579,22 @@ fn ssh_list(app: &mut App, ui: &mut egui::Ui) {
                 )
                 .wrap(),
             );
+            ui.add(
+                egui::Label::new(
+                    egui::RichText::new(&entry.public_line)
+                        .monospace()
+                        .size(11.0),
+                )
+                .wrap(),
+            );
             ui.horizontal(|ui| {
+                if theme::secondary_button(ui, "Copy public key").clicked() {
+                    ui.ctx().copy_text(entry.public_line.clone());
+                    app.status = Some("Public key copied.".to_owned());
+                }
+                if theme::secondary_button(ui, "Export…").clicked() {
+                    export_ssh_public(app, &entry.label, &entry.public_line);
+                }
                 if theme::secondary_button(ui, "Rename").clicked() {
                     app.identities.ssh_renaming = Some((entry.id.clone(), entry.label.clone()));
                 }
@@ -591,6 +606,27 @@ fn ssh_list(app: &mut App, ui: &mut egui::Ui) {
             ssh_delete_row(app, ui, &entry.id, &entry.label);
         });
         ui.add_space(4.0);
+    }
+}
+
+/// Write an SSH signing key's public line to a `.pub` file the user chooses,
+/// so they can hand it out for others to verify against (issue #5).
+fn export_ssh_public(app: &mut App, label: &str, public_line: &str) {
+    let suggested = format!("{}.pub", label.replace(' ', "_"));
+    let Some(dest) = rfd::FileDialog::new()
+        .set_file_name(&suggested)
+        .save_file()
+    else {
+        return;
+    };
+    let body = if public_line.ends_with('\n') {
+        public_line.to_owned()
+    } else {
+        format!("{public_line}\n")
+    };
+    match std::fs::write(&dest, body) {
+        Ok(()) => app.status = Some(format!("Exported {label}'s public key")),
+        Err(e) => app.status = Some(format!("Could not export the public key: {e}")),
     }
 }
 
