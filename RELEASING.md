@@ -150,10 +150,27 @@ Pull CI's seven down beside your dmg, then sign all eight together so `SHA256SUM
 bytes that ship.
 
 ```sh
-mkdir -p ~/agepony-release && cd ~/agepony-release
-gh release download v1.0.0 --repo norsehorse-dev/AgePonyDesktop --dir .
+rm -rf ~/agepony-release && mkdir -p ~/agepony-release && cd ~/agepony-release
+gh release download v1.0.0 --repo norsehorse-dev/AgePonyDesktop --dir . --clobber
 cp /Users/kevinstewart/Apps/AgePonyDesktop/dist/AgePony-macOS.dmg .
+```
 
+**Before signing, confirm the bytes are this release.** A stale binary left in the staging dir from a
+prior cycle gets signed as if it belonged to this one, and a good signature over the wrong version is
+still the wrong version. Both bit 2.1.0. The `rm -rf` and `--clobber` above prevent the stale dir; this
+catches it if it slips through. The Linux and Windows binaries do not run on the Mac, so check the
+version string they embed (substitute the version you are shipping):
+
+```sh
+rm -rf /tmp/ap-vc && mkdir /tmp/ap-vc
+tar -xzf AgePony-linux-x86_64.tar.gz -C /tmp/ap-vc
+strings "$(find /tmp/ap-vc -type f -name agepony)" | grep 'AgePony Desktop 1.0.0'
+```
+
+That line must print. If it shows an older version, the staging dir was not clean; start this section
+over. Then assemble and sign:
+
+```sh
 FILES=(
   AgePony-macOS.dmg
   AgePony-linux-x86_64.deb
