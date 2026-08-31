@@ -30,6 +30,7 @@ use ssh_key::public::KeyData;
 use ssh_key::{Algorithm, HashAlg, LineEnding, PrivateKey, PublicKey, Signature, SshSig};
 
 pub mod allowed_signers;
+pub mod mldsa;
 pub mod signers;
 pub mod store;
 
@@ -64,6 +65,9 @@ pub const ACCEPTED_NAMESPACES: &[&str] = &[NAMESPACE_QUALIFIED, NAMESPACE];
 /// [`CoreError::UnsupportedSigningKey`] for a key type that cannot sign, or
 /// [`CoreError::Signing`] if the signature operation itself fails.
 pub fn sign_detached(openssh_private_key: &str, message: &[u8], namespace: &str) -> Result<String> {
+    if mldsa::is_mldsa_private(openssh_private_key) {
+        return mldsa::sign(openssh_private_key, message, namespace);
+    }
     let key =
         PrivateKey::from_openssh(openssh_private_key).map_err(|_| CoreError::InvalidIdentity)?;
 
@@ -102,6 +106,9 @@ pub struct Verdict {
 /// a namespace mismatch — returns `Ok` with `valid == false` and a `reason`, so
 /// callers can distinguish "not a signature" from "not a valid one".
 pub fn verify_detached(signature: &[u8], message: &[u8], namespace: &str) -> Result<Verdict> {
+    if mldsa::is_mldsa_signature(signature) {
+        return mldsa::verify(signature, message, namespace);
+    }
     let sig = decode_armored_or_raw(signature)?;
     let public = PublicKey::from(sig.public_key().clone());
     let key_type = sig.algorithm().as_str().to_owned();

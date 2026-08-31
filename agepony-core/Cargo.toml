@@ -36,6 +36,10 @@ ssh-key = { version = "0.6", default-features = false, features = ["ed25519", "r
 # Direct RSA signing, to work around an ssh-key 0.6.7 bug that makes its own
 # RSA SSHSIG signer error (it rebuilds the key with p twice instead of p,q).
 # Pinned to the same sha2 (0.10) rsa 0.9 uses, so the pkcs1v15 digest lines up.
+# Native mldsa44-ed25519 composite SSHSIG signing (issue #6): the OpenSSH
+# ssh-mldsa44-ed25519 algorithm is ML-DSA-44 (FIPS-204) plus Ed25519.
+ml-dsa = "0.1.1"
+ed25519-dalek = "2"
 rsa = "0.9"
 sha2_rsa = { package = "sha2", version = "0.10", features = ["oid"] }
 # OsRng for generating SSH signing keys. rand_core 0.6 matches ssh-key's.

@@ -37,6 +37,8 @@ pub enum SigningKind {
     Ed25519,
     /// `ssh-rsa` (signs as `rsa-sha2-512`).
     Rsa,
+    /// `mldsa44-ed25519`, the OpenSSH 10.4 composite post-quantum key (issue #6).
+    MldsaEd25519,
 }
 
 impl SigningKind {
@@ -46,6 +48,7 @@ impl SigningKind {
         match self {
             SigningKind::Ed25519 => "ssh-ed25519",
             SigningKind::Rsa => "ssh-rsa",
+            SigningKind::MldsaEd25519 => "mldsa44-ed25519",
         }
     }
 
@@ -174,6 +177,10 @@ impl SigningStore {
         kind: SigningKind,
         passphrase: Option<&SecretString>,
     ) -> Result<SigningEntry> {
+        if kind == SigningKind::MldsaEd25519 {
+            let g = super::mldsa::generate()?;
+            return self.insert(label, &g.public_line, &g.fingerprint, kind, &g.secret, passphrase);
+        }
         let mut rng = rand_core::OsRng;
         let key = match kind {
             SigningKind::Ed25519 => PrivateKey::random(&mut rng, Algorithm::Ed25519)
@@ -182,6 +189,9 @@ impl SigningStore {
                 let kp = RsaKeypair::random(&mut rng, 3072)
                     .map_err(|e| CoreError::Signing(e.to_string()))?;
                 PrivateKey::from(kp)
+            }
+            SigningKind::MldsaEd25519 => {
+                return Err(CoreError::Signing("mldsa handled above".to_owned()));
             }
         };
 

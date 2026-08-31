@@ -70,6 +70,9 @@ pub fn show_ssh(app: &mut App, ui: &mut egui::Ui) {
         if theme::primary_button_enabled(ui, "Generate SSH · RSA", ready).clicked() {
             generate_ssh(app, SigningKind::Rsa);
         }
+        if theme::primary_button_enabled(ui, "Generate SSH · ML-DSA", ready).clicked() {
+            generate_ssh(app, SigningKind::MldsaEd25519);
+        }
         if theme::primary_button_enabled(ui, "Import SSH key…", named).clicked() {
             import_ssh(app);
         }
