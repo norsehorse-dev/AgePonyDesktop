@@ -177,12 +177,19 @@ impl Signers {
         wire: &[u8],
         source: SignerSource,
     ) -> Result<StoredSigner> {
-        let public =
-            ssh_key::PublicKey::from_bytes(wire).map_err(|_| CoreError::InvalidSignature)?;
+        let key_type = if super::mldsa::is_mldsa_public_wire(wire) {
+            super::mldsa::ALG_NAME.to_owned()
+        } else {
+            ssh_key::PublicKey::from_bytes(wire)
+                .map_err(|_| CoreError::InvalidSignature)?
+                .algorithm()
+                .as_str()
+                .to_owned()
+        };
         let signer = StoredSigner {
             id: self.next_id(),
             name: name.trim().to_owned(),
-            key_type: public.algorithm().as_str().to_owned(),
+            key_type,
             public_wire_b64: BASE64.encode(wire),
             comment: None,
             source,

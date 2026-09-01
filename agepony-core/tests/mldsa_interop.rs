@@ -54,3 +54,28 @@ fn round_trip_signature_is_signer_bound() {
     assert!(va.valid && vb.valid);
     assert_ne!(va.signer_wire, vb.signer_wire);
 }
+
+#[test]
+fn imported_mldsa_pubkey_matches_its_signature() {
+    // Regression for #6: an external mldsa44-ed25519 public key must import as a
+    // trusted signer, and the key embedded in a signature must resolve to it.
+    use agepony_core::signing::signers::{SignerSource, Signers};
+    const PUB: &str = include_str!("fixtures/mldsa44_ed25519.pub");
+
+    let mut signers = Signers::default();
+    let s = signers
+        .add_from_public_line("sectec@example.com", PUB, SignerSource::PasteKey)
+        .expect("an mldsa44-ed25519 public key should import as a trusted signer");
+    assert_eq!(s.key_type, mldsa::ALG_NAME);
+    assert!(
+        s.fingerprint().is_some(),
+        "an imported mldsa signer should show a fingerprint"
+    );
+
+    let v = verify_detached_any(SIG.as_bytes(), MSG, &["agepony"]).unwrap();
+    assert!(v.valid, "reason: {:?}", v.reason);
+    let matched = signers
+        .matching(&v.signer_wire)
+        .expect("the signature's key must resolve to the imported signer");
+    assert_eq!(matched.name, "sectec@example.com");
+}

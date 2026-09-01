@@ -183,6 +183,9 @@ pub fn verify_detached_any(
 ///
 /// [`CoreError::InvalidSignature`] if `wire` is not a valid SSH public key.
 pub fn fingerprint(wire: &[u8]) -> Result<String> {
+    if mldsa::is_mldsa_public_wire(wire) {
+        return Ok(mldsa::fingerprint(wire));
+    }
     let public = PublicKey::from_bytes(wire).map_err(|_| CoreError::InvalidSignature)?;
     Ok(public.fingerprint(HashAlg::Sha256).to_string())
 }

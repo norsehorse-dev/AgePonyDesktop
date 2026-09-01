@@ -32,6 +32,7 @@ const KNOWN_KEY_TYPES: &[&str] = &[
     "ecdsa-sha2-nistp521",
     "sk-ssh-ed25519@openssh.com",
     "sk-ecdsa-sha2-nistp256@openssh.com",
+    "ssh-mldsa44-ed25519@openssh.com",
 ];
 
 /// One entry of an `allowed_signers` file.

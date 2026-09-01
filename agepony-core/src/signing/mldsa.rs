@@ -261,6 +261,24 @@ pub fn is_mldsa_signature(signature: &[u8]) -> bool {
         .unwrap_or(false)
 }
 
+/// Whether `wire` is the SSH public-key blob of a composite `mldsa44-ed25519`
+/// key: its first SSH string is [`ALG_NAME`]. The `ssh-key` crate cannot parse
+/// these, so the trusted-signer store and the fingerprint helper route here.
+#[must_use]
+pub fn is_mldsa_public_wire(wire: &[u8]) -> bool {
+    Reader::new(wire)
+        .string()
+        .map(|n| n == ALG_NAME.as_bytes())
+        .unwrap_or(false)
+}
+
+/// The `SHA256:...` fingerprint of a composite public-key blob, exactly as
+/// `ssh-keygen -lf` prints it and as [`generate`] records it.
+#[must_use]
+pub fn fingerprint(wire: &[u8]) -> String {
+    format!("SHA256:{}", STANDARD_NO_PAD.encode(Sha256::digest(wire)))
+}
+
 fn envelope_name(signature: &[u8]) -> Result<Vec<u8>> {
     let raw = dearmor(signature)?;
     let mut r = Reader::new(&raw);
