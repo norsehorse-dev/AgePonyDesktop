@@ -94,3 +94,41 @@ fn ssh_keygen_accepts_our_ed25519_signature_and_allowed_signers() {
 fn ssh_keygen_accepts_our_rsa_signature_and_allowed_signers() {
     interop_roundtrip(RSA_KEY, RSA_PUB, "kevin-rsa@agepony");
 }
+
+/// Re-wrap a PEM SSHSIG's base64 body at `width` columns, discarding the
+/// original line breaks. Simulates the 70-column armor ssh-keygen and the mobile
+/// apps emit.
+fn rewrap_pem(pem: &str, width: usize) -> String {
+    let body: String = pem
+        .lines()
+        .filter(|l| !l.trim_start().starts_with("-----"))
+        .flat_map(|l| l.split_whitespace())
+        .collect();
+    let mut out = String::from("-----BEGIN SSH SIGNATURE-----\n");
+    for chunk in body.as_bytes().chunks(width) {
+        out.push_str(std::str::from_utf8(chunk).unwrap());
+        out.push('\n');
+    }
+    out.push_str("-----END SSH SIGNATURE-----\n");
+    out
+}
+
+/// Regression for #8: ssh-keygen and the AgePony mobile apps wrap SSHSIG armor
+/// at 70 columns, but ssh-key's RFC 7468 parser rejects lines over 64. A valid
+/// signature must verify no matter how its armor is wrapped.
+#[test]
+fn a_signature_wrapped_at_seventy_columns_still_verifies() {
+    let armored = signing::sign_detached(ED_KEY, MSG, signing::NAMESPACE).unwrap();
+    let rewrapped = rewrap_pem(&armored, 70);
+    assert!(
+        rewrapped.lines().any(|l| l.len() == 70),
+        "the fixture should exercise 70-column lines"
+    );
+    let v = signing::verify_detached_any(rewrapped.as_bytes(), MSG, &[signing::NAMESPACE]).unwrap();
+    assert!(
+        v.valid,
+        "70-wrapped signature should verify, reason: {:?}",
+        v.reason
+    );
+    assert_eq!(v.key_type, "ssh-ed25519");
+}

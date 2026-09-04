@@ -195,8 +195,32 @@ pub fn fingerprint(wire: &[u8]) -> Result<String> {
 /// Decode an armored (`-----BEGIN SSH SIGNATURE-----`) SSHSIG blob. Armor is the
 /// wire form AgePony and `ssh-keygen` write for a detached signature, so a `.sig`
 /// file is always PEM.
+///
+/// `ssh-key`'s PEM parser follows RFC 7468, which rejects base64 lines longer
+/// than 64 characters. OpenSSH's `ssh-keygen` and the AgePony mobile apps wrap
+/// SSHSIG armor at 70, so their signatures are valid but fail a strict parse. On
+/// that failure, re-wrap the body at 64 and retry, so a signature is never
+/// rejected over its line width (issue #8).
 fn decode_armored_or_raw(input: &[u8]) -> Result<SshSig> {
-    SshSig::from_pem(input).map_err(|_| CoreError::InvalidSignature)
+    if let Ok(sig) = SshSig::from_pem(input) {
+        return Ok(sig);
+    }
+    let text = std::str::from_utf8(input).map_err(|_| CoreError::InvalidSignature)?;
+    if !text.contains("SSH SIGNATURE") {
+        return Err(CoreError::InvalidSignature);
+    }
+    let body: String = text
+        .lines()
+        .filter(|l| !l.trim_start().starts_with("-----"))
+        .flat_map(|l| l.split_whitespace())
+        .collect();
+    let mut pem = String::from("-----BEGIN SSH SIGNATURE-----\n");
+    for chunk in body.as_bytes().chunks(64) {
+        pem.push_str(&String::from_utf8_lossy(chunk));
+        pem.push('\n');
+    }
+    pem.push_str("-----END SSH SIGNATURE-----\n");
+    SshSig::from_pem(pem.as_bytes()).map_err(|_| CoreError::InvalidSignature)
 }
 
 /// Sign with RSA (`rsa-sha2-512`), rebuilding the key correctly around the
